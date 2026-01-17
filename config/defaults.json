@@ -1,0 +1,116 @@
+{
+  "folders": {
+    "repos": "C:\\development\\repos",
+    "workspace": "C:\\development\\workspace",
+    "temp": "C:\\temp\\makeapp",
+    "logs": "C:\\temp\\makeapp\\logs",
+    "cache": "C:\\temp\\makeapp\\cache"
+  },
+  "github": {
+    "owner": "",
+    "defaultOrg": "",
+    "defaultRepo": "",
+    "defaultBaseBranch": "main",
+    "apiBaseUrl": "https://api.github.com",
+    "token": "",
+    "tokenEnvVar": "GITHUB_TOKEN"
+  },
+  "llm": {
+    "defaultProvider": "copilot",
+    "providers": {
+      "copilot": {
+        "enabled": true,
+        "model": "gpt-4o",
+        "apiKey": "",
+        "apiKeyEnvVar": "GITHUB_COPILOT_TOKEN"
+      },
+      "openai": {
+        "enabled": false,
+        "model": "gpt-4o",
+        "apiKey": "",
+        "apiKeyEnvVar": "OPENAI_API_KEY",
+        "apiBaseUrl": "https://api.openai.com/v1"
+      },
+      "azure": {
+        "enabled": false,
+        "model": "gpt-4o",
+        "apiKey": "",
+        "apiKeyEnvVar": "AZURE_OPENAI_API_KEY",
+        "endpoint": "",
+        "deploymentName": ""
+      },
+      "anthropic": {
+        "enabled": false,
+        "model": "claude-sonnet-4-20250514",
+        "apiKey": "",
+        "apiKeyEnvVar": "ANTHROPIC_API_KEY",
+        "apiBaseUrl": "https://api.anthropic.com"
+      },
+      "ollama": {
+        "enabled": false,
+        "model": "llama3",
+        "apiBaseUrl": "http://localhost:11434"
+      }
+    }
+  },
+  "agent": {
+    "maxIterations": 50,
+    "autoApproveCommands": false,
+    "allowedCommands": ["git", "gh", "npm", "dotnet", "python", "pip", "node", "npx", "pnpm", "yarn"],
+    "blockedCommands": ["rm -rf", "format", "del /s", "rmdir /s"],
+    "workingDirectory": ""
+  },
+  "git": {
+    "autoStage": true,
+    "autoCommit": false,
+    "autoPush": false,
+    "autoCreatePr": false,
+    "commitMessagePrefix": "feat: ",
+    "prTemplate": "",
+    "signCommits": false
+  },
+  "ui": {
+    "theme": "default",
+    "progressBarWidth": 50,
+    "spinnerStyle": "dots",
+    "showTimestamps": true,
+    "verboseOutput": false,
+    "colorOutput": true
+  },
+  "timeouts": {
+    "gitOperationSeconds": 60,
+    "apiRequestSeconds": 30,
+    "llmResponseSeconds": 120,
+    "commandExecutionSeconds": 300,
+    "branchCheckoutSeconds": 30,
+    "prCreationSeconds": 60
+  },
+  "limits": {
+    "maxFileSizeKb": 1024,
+    "maxFilesPerCommit": 50,
+    "maxPromptLength": 10000,
+    "maxResponseLength": 50000,
+    "maxLogFileSizeMb": 100,
+    "maxCacheAgeDays": 7
+  },
+  "notifications": {
+    "method": "terminal",
+    "webhookUrl": "",
+    "slackChannel": "",
+    "teamsWebhook": "",
+    "toastEnabled": true,
+    "soundEnabled": false
+  },
+  "logging": {
+    "level": "info",
+    "logToFile": true,
+    "logToConsole": true,
+    "includeTimestamps": true,
+    "retentionDays": 30
+  },
+  "mcp": {
+    "enabled": true,
+    "configPath": ".vscode/mcp.json",
+    "servers": {}
+  }
+}

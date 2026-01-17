@@ -1,0 +1,102 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "path": "${MakeAppRoot}\\sandbox",
+    "repoName": "sandbox-repo",
+    "initWithSampleFiles": true,
+    "sampleProjectType": "python",
+    "autoCleanOnExit": false,
+    "preserveHistory": false
+  },
+  "folders": {
+    "repos": "${MakeAppRoot}\\sandbox",
+    "workspace": "${MakeAppRoot}\\sandbox\\workspace",
+    "temp": "${MakeAppRoot}\\sandbox\\temp",
+    "logs": "${MakeAppRoot}\\sandbox\\logs",
+    "cache": "${MakeAppRoot}\\sandbox\\cache"
+  },
+  "github": {
+    "owner": "philiv99",
+    "defaultOrg": "",
+    "defaultRepo": "makeapp-sandbox-test",
+    "defaultBaseBranch": "main",
+    "apiBaseUrl": "https://api.github.com",
+    "token": "",
+    "tokenEnvVar": "GITHUB_TOKEN",
+    "simulateRemote": false,
+    "autoCreateRepo": true
+  },
+  "llm": {
+    "defaultProvider": "copilot",
+    "simulateResponses": false,
+    "providers": {
+      "copilot": {
+        "enabled": true,
+        "model": "gpt-4o",
+        "apiKey": "",
+        "apiKeyEnvVar": "GITHUB_COPILOT_TOKEN"
+      }
+    }
+  },
+  "agent": {
+    "maxIterations": 10,
+    "autoApproveCommands": true,
+    "allowedCommands": ["git", "gh", "npm", "dotnet", "python", "pip", "node", "npx", "pnpm", "yarn", "echo", "type", "cat", "dir", "ls"],
+    "blockedCommands": ["rm -rf /", "format", "del /s /q C:", "rmdir /s /q C:"],
+    "workingDirectory": ""
+  },
+  "git": {
+    "autoStage": true,
+    "autoCommit": true,
+    "autoPush": false,
+    "autoCreatePr": false,
+    "commitMessagePrefix": "feat: ",
+    "prTemplate": "",
+    "signCommits": false,
+    "useLocalOnly": true
+  },
+  "ui": {
+    "theme": "default",
+    "progressBarWidth": 50,
+    "spinnerStyle": "dots",
+    "showTimestamps": true,
+    "verboseOutput": true,
+    "colorOutput": true
+  },
+  "timeouts": {
+    "gitOperationSeconds": 30,
+    "apiRequestSeconds": 15,
+    "llmResponseSeconds": 60,
+    "commandExecutionSeconds": 120,
+    "branchCheckoutSeconds": 15,
+    "prCreationSeconds": 30
+  },
+  "limits": {
+    "maxFileSizeKb": 512,
+    "maxFilesPerCommit": 20,
+    "maxPromptLength": 5000,
+    "maxResponseLength": 25000,
+    "maxLogFileSizeMb": 50,
+    "maxCacheAgeDays": 1
+  },
+  "notifications": {
+    "method": "terminal",
+    "webhookUrl": "",
+    "slackChannel": "",
+    "teamsWebhook": "",
+    "toastEnabled": false,
+    "soundEnabled": false
+  },
+  "logging": {
+    "level": "debug",
+    "logToFile": true,
+    "logToConsole": true,
+    "includeTimestamps": true,
+    "retentionDays": 1
+  },
+  "mcp": {
+    "enabled": false,
+    "configPath": ".vscode/mcp.json",
+    "servers": {}
+  }
+}

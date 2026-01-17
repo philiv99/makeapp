@@ -1,0 +1,23 @@
+# MakeApp gitignore
+
+# Sandbox environment (created at runtime)
+sandbox/
+
+# User configuration (may contain sensitive data)
+# Note: ~/.makeapp/config.json is outside repo
+
+# Logs and temp files
+*.log
+*.tmp
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store

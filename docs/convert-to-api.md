@@ -1722,10 +1722,10 @@ For users to benefit from Copilot Memory with MakeApp:
 
 #### 1.1 Project Setup
 
-- [ ] Create new .NET 8 Web API solution structure:
+- [ ] Create new .NET 8 Web API solution named **`makeapp_api`**:
   ```
-  MakeApp.Api/
-  ├── MakeApp.Api.sln
+  makeapp_api/
+  ├── makeapp_api.sln
   ├── src/
   │   ├── MakeApp.Api/                    # Main API project
   │   │   ├── Controllers/
@@ -1749,6 +1749,8 @@ For users to benefit from Copilot Memory with MakeApp:
       ├── MakeApp.Application.Tests/
       └── MakeApp.Infrastructure.Tests/
   ```
+
+> **Note**: The solution folder is named `makeapp_api` while internal C# projects follow .NET PascalCase naming conventions (e.g., `MakeApp.Api`, `MakeApp.Core`).
 
 - [ ] Set up dependency injection container
 - [ ] Configure Serilog for structured logging
@@ -4535,8 +4537,8 @@ ENTRYPOINT ["dotnet", "MakeApp.Api.dll"]
 ## Project Structure Summary
 
 ```
-MakeApp.Api/
-├── MakeApp.Api.sln
+makeapp_api/
+├── makeapp_api.sln
 ├── docker-compose.yml
 ├── README.md
 ├── docs/
@@ -4920,12 +4922,36 @@ POST /api/v1/repos/{owner}/{name}/memories/prune
 
 1. **Review and approve this plan** with stakeholders
 2. **Set up development environment** with .NET 8 SDK
-3. **Create GitHub repository** for the API project
+3. **Create GitHub repository** named `makeapp_api` for the API project
 4. **Begin Phase 1** implementation
 5. **Schedule weekly progress reviews**
+6. **Remove PowerShell code and references** after the entire plan has been successfully implemented (see Post-Implementation Cleanup below)
 
 ---
 
-*Document Version: 1.0*  
+## Post-Implementation Cleanup
+
+Once all phases (1-8) have been successfully completed and the `makeapp_api` Web API is fully functional:
+
+- [ ] Remove all PowerShell modules from the `/modules` directory:
+  - `BranchManager.ps1`
+  - `CopilotConfig.ps1`
+  - `Executor.ps1`
+  - `FeaturePrompt.ps1`
+  - `GitAutomation.ps1`
+  - `Sandbox.ps1`
+- [ ] Remove `makeapp.ps1` entry point script
+- [ ] Remove PowerShell test files from `/tests` directory
+- [ ] Update `README.md` to reference only the Web API
+- [ ] Remove all `**PowerShell Equivalent**` references from this document
+- [ ] Archive the original PowerShell implementation (optional - create a `legacy/` branch)
+- [ ] Update `.github/copilot-instructions.md` to reflect .NET/C# conventions instead of PowerShell
+
+> **Important**: Do not remove the PowerShell code until the Web API achieves full functional parity and has been validated in production use.
+
+---
+
+*Document Version: 1.1*  
 *Created: January 17, 2026*  
+*Updated: January 17, 2026*  
 *Author: GitHub Copilot*

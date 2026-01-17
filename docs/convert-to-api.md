@@ -53,6 +53,37 @@ This document outlines a comprehensive phased plan for converting the MakeApp Po
 | **Logging** | Serilog | Structured logging with multiple sinks |
 | **Authentication** | JWT Bearer + GitHub OAuth | Secure API access |
 
+### Sandbox & Repository Architecture
+
+All repositories created or checked out by MakeApp reside in a single **sandbox folder**. Each repository contains its own `.makeapp/` folder for workflow data:
+
+```
+sandbox/                          # Configured sandbox root folder
+├── app-one/                      # First repo (created or cloned)
+│   ├── .makeapp/                 # MakeApp workflow data (per-repo)
+│   │   ├── plan.json             # ✅ Committed - implementation plan
+│   │   ├── status.json           # ✅ Committed - workflow state
+│   │   ├── agents/               # ✅ Committed - agent configs
+│   │   ├── cache/                # ❌ Gitignored - LLM response cache
+│   │   ├── logs/                 # ❌ Gitignored - execution logs
+│   │   └── temp/                 # ❌ Gitignored - temporary files
+│   ├── .github/copilot-instructions.md
+│   ├── .gitignore                # Excludes .makeapp/cache, logs, temp
+│   └── src/...
+│
+├── app-two/                      # Another repo
+│   └── .makeapp/...              # Its own isolated workflow data
+│
+└── existing-checkout/            # Cloned existing repo
+    └── .makeapp/...              # MakeApp data added when features added
+```
+
+**Key Principles:**
+1. **All repos in one sandbox folder** - Easy to manage, consistent location
+2. **Per-repo working directories** - Each repo's cache/logs/temp isolated inside `.makeapp/`
+3. **Proper .gitignore** - Temporary data excluded, plan/status/agents committed
+4. **No global working folders** - No sandbox-level cache/logs/temp folders
+
 ### High-Level Architecture
 
 ```
@@ -126,16 +157,41 @@ This document outlines a comprehensive phased plan for converting the MakeApp Po
 
 ## API Endpoint Design
 
+### Client Configuration
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/config/user` | Get current GitHub user/owner configuration |
+| PUT | `/api/v1/config/user` | Configure GitHub user/owner identity |
+| GET | `/api/v1/config/user/validate` | Validate GitHub credentials and permissions |
+
+### Core App Lifecycle Endpoints
+
+These are the two primary workflow endpoints that drive the entire system:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| **POST** | **`/api/v1/apps`** | **Create a new app from requirements** |
+| **POST** | **`/api/v1/apps/{owner}/{name}/features`** | **Add a feature to an existing app** |
+| GET | `/api/v1/apps` | List all apps managed by MakeApp |
+| GET | `/api/v1/apps/{owner}/{name}` | Get app details and current status |
+| GET | `/api/v1/apps/{owner}/{name}/plan` | Get the implementation plan |
+| GET | `/api/v1/apps/{owner}/{name}/phases` | Get phase completion status |
+| GET | `/api/v1/apps/{owner}/{name}/events` | Stream workflow events (SSE) |
+| POST | `/api/v1/apps/{owner}/{name}/abort` | Abort current workflow |
+
 ### Repository Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/v1/repos` | List available repositories |
 | GET | `/api/v1/repos/{owner}/{name}` | Get repository details |
+| POST | `/api/v1/repos` | Create a new repository on GitHub |
 | POST | `/api/v1/repos/scan` | Scan a folder for repositories |
 | GET | `/api/v1/repos/{owner}/{name}/config` | Get repository configuration status |
 | PUT | `/api/v1/repos/{owner}/{name}/config/copilot-instructions` | Update Copilot instructions |
 | PUT | `/api/v1/repos/{owner}/{name}/config/mcp` | Update MCP configuration |
+| PUT | `/api/v1/repos/{owner}/{name}/config/agents` | Update agent orchestration configuration |
 
 ### Branch Management
 
@@ -209,6 +265,512 @@ This document outlines a comprehensive phased plan for converting the MakeApp Po
 | GET | `/api/v1/config` | Get current configuration |
 | PUT | `/api/v1/config` | Update configuration |
 | GET | `/api/v1/config/defaults` | Get default configuration |
+
+---
+
+## Core Workflows: Create App & Add Feature
+
+This section defines the two primary workflows that drive the MakeApp API. Both workflows follow a similar pattern but differ in their initialization phase.
+
+### Workflow Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        CREATE APP / ADD FEATURE WORKFLOW                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌────────────────┐    ┌────────────────┐    ┌────────────────┐            │
+│  │   1. INIT      │───▶│   2. PLAN      │───▶│   3. SETUP     │            │
+│  │  (Repo Setup)  │    │ (LLM Planning) │    │ (Agent Config) │            │
+│  └────────────────┘    └────────────────┘    └────────────────┘            │
+│                                                     │                        │
+│                                                     ▼                        │
+│  ┌────────────────────────────────────────────────────────────────────┐    │
+│  │                     4. PHASED IMPLEMENTATION LOOP                   │    │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │    │
+│  │  │  PHASE   │▶│  CODE    │▶│  TEST    │▶│  REVIEW  │▶│ COMMIT   │ │    │
+│  │  │   N      │ │ (Coder)  │ │ (Tester) │ │(Reviewer)│ │ & PUSH   │ │    │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │    │
+│  │       │                                                     │       │    │
+│  │       │◀────────────────────────────────────────────────────┘       │    │
+│  │       │         (Loop until all phases complete)                    │    │
+│  └───────┼─────────────────────────────────────────────────────────────┘    │
+│          │                                                                   │
+│          ▼                                                                   │
+│  ┌────────────────┐                                                         │
+│  │ 5. FINALIZE    │ (PR Creation, Status Update)                           │
+│  └────────────────┘                                                         │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### POST `/api/v1/apps` - Create a New App
+
+Creates a brand new application from minimal input parameters.
+
+#### Request Body
+
+```json
+{
+  "name": "my-awesome-app",
+  "requirements": "A REST API for managing a todo list with user authentication, PostgreSQL storage, and real-time notifications via WebSockets",
+  "projectType": "node",           // Optional: node, python, dotnet, go, etc.
+  "createPullRequest": true,       // Optional: default true
+  "notifyOnComplete": true         // Optional: webhook/notification
+}
+```
+
+#### Workflow Steps
+
+##### Step 1: Repository Initialization
+
+| Action | Description | Files Created/Modified |
+|--------|-------------|------------------------|
+| Create GitHub repo | Use Octokit to create new repository | - |
+| Clone locally | Clone to workspace folder | `.git/` |
+| Initialize main branch | Set up default branch | - |
+| Generate `.gitignore` | Based on projectType, use LLM for requirements-specific exclusions | `.gitignore` |
+| Generate `README.md` | LLM creates comprehensive README from requirements | `README.md` |
+| Initial commit | "Initial commit: Project scaffold" | - |
+| Push main | Push to origin | - |
+| Create creation branch | `git checkout -b creation` | - |
+
+##### Step 2: LLM Plan Generation
+
+The LLM analyzes requirements and generates a comprehensive phased implementation plan:
+
+```json
+{
+  "planId": "plan_abc123",
+  "totalPhases": 5,
+  "estimatedDuration": "4-6 hours",
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Project Foundation",
+      "description": "Set up project structure, dependencies, and configuration",
+      "status": "not-started",
+      "tasks": [
+        {
+          "id": "1.1",
+          "description": "Initialize package.json with dependencies",
+          "files": ["package.json"],
+          "agentRole": "coder"
+        },
+        {
+          "id": "1.2", 
+          "description": "Create TypeScript configuration",
+          "files": ["tsconfig.json"],
+          "agentRole": "coder"
+        }
+      ],
+      "acceptanceCriteria": [
+        "npm install completes without errors",
+        "TypeScript compilation succeeds"
+      ],
+      "dependencies": []
+    },
+    {
+      "phase": 2,
+      "name": "Database Layer",
+      "description": "PostgreSQL schema, migrations, and connection pooling",
+      "status": "not-started",
+      "tasks": [...],
+      "acceptanceCriteria": [...],
+      "dependencies": [1]
+    }
+  ]
+}
+```
+
+**Files Created:**
+| File | Purpose |
+|------|---------|
+| `.makeapp/plan.json` | Machine-readable implementation plan |
+| `.makeapp/plan.md` | Human-readable plan with status checkboxes |
+| `.makeapp/status.json` | Current workflow state and progress |
+
+##### Step 3: Agent Orchestration Setup
+
+Create agent configuration files that define how different AI agents collaborate:
+
+**Files Created:**
+
+| File | Purpose |
+|------|---------|
+| `.makeapp/agents/orchestrator.json` | Main coordination agent configuration |
+| `.makeapp/agents/coder.json` | Code generation agent configuration |
+| `.makeapp/agents/tester.json` | Test generation and validation agent |
+| `.makeapp/agents/reviewer.json` | Code review and approval agent |
+| `.github/copilot-instructions.md` | Targeted instructions based on requirements |
+
+**orchestrator.json:**
+```json
+{
+  "role": "orchestrator",
+  "description": "Coordinates all agents and manages phase progression",
+  "responsibilities": [
+    "Monitor phase completion status",
+    "Trigger appropriate agents for each task",
+    "Ensure acceptance criteria are met before phase advancement",
+    "Update plan status after each task completion",
+    "Handle failures and retry logic"
+  ],
+  "phaseCriteria": {
+    "requireAllTasksComplete": true,
+    "requireTestsPassing": true,
+    "requireReviewApproval": true
+  }
+}
+```
+
+**coder.json:**
+```json
+{
+  "role": "coder",
+  "description": "Generates and modifies code files",
+  "constraints": [
+    "Follow patterns established in copilot-instructions.md",
+    "Maintain consistency with existing codebase",
+    "Include inline comments for complex logic",
+    "Generate corresponding test stubs"
+  ],
+  "outputRequirements": {
+    "mustInclude": ["implementation", "imports"],
+    "mustValidate": ["syntax", "types"]
+  }
+}
+```
+
+**tester.json:**
+```json
+{
+  "role": "tester",
+  "description": "Generates and runs tests for implemented code",
+  "responsibilities": [
+    "Generate unit tests for new functionality",
+    "Run existing test suite",
+    "Report coverage metrics",
+    "Validate acceptance criteria"
+  ],
+  "testFramework": "jest",  // Determined from projectType
+  "minimumCoverage": 80
+}
+```
+
+**reviewer.json:**
+```json
+{
+  "role": "reviewer",
+  "description": "Reviews code quality and approves for commit",
+  "checkpoints": [
+    "Code follows project conventions",
+    "No security vulnerabilities introduced",
+    "Performance considerations addressed",
+    "Documentation updated",
+    "Tests are meaningful and pass"
+  ],
+  "approvalRequired": true
+}
+```
+
+**Initial copilot-instructions.md (LLM-generated based on requirements):**
+```markdown
+# GitHub Copilot Instructions
+
+## Project Overview
+A REST API for managing a todo list with user authentication, 
+PostgreSQL storage, and real-time notifications via WebSockets.
+
+## Architecture Decisions
+- Express.js for HTTP server
+- TypeScript for type safety
+- PostgreSQL with pg-pool for database
+- Socket.io for WebSocket support
+- JWT for authentication
+
+## Code Style Guidelines
+### TypeScript Conventions
+- Use strict mode
+- Prefer interfaces over types for object shapes
+- Use async/await, never callbacks
+- [Additional project-specific guidelines...]
+
+## File Organization
+- src/routes/ - API route handlers
+- src/services/ - Business logic
+- src/models/ - Database models
+- src/middleware/ - Express middleware
+- src/websocket/ - Socket.io handlers
+
+## Current Phase: [PHASE_NAME]
+[Dynamically updated as implementation progresses]
+```
+
+##### Step 4: Phased Implementation Loop
+
+For each phase, the following sequence executes:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          PHASE N EXECUTION                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  4.1 ORCHESTRATOR: Load phase tasks from plan.json                          │
+│          │                                                                   │
+│          ▼                                                                   │
+│  4.2 FOR EACH TASK:                                                          │
+│      ┌────────────────────────────────────────────────────────────────┐     │
+│      │                                                                 │     │
+│      │  a) CODER AGENT                                                │     │
+│      │     - Read task requirements                                   │     │
+│      │     - Generate/modify files                                    │     │
+│      │     - Update imports and dependencies                          │     │
+│      │                    │                                           │     │
+│      │                    ▼                                           │     │
+│      │  b) TESTER AGENT                                               │     │
+│      │     - Generate tests for new code                              │     │
+│      │     - Run test suite                                           │     │
+│      │     - Report: PASS or FAIL with details                        │     │
+│      │                    │                                           │     │
+│      │          ┌────────┴────────┐                                  │     │
+│      │          │                  │                                  │     │
+│      │       PASS               FAIL                                  │     │
+│      │          │                  │                                  │     │
+│      │          ▼                  ▼                                  │     │
+│      │  c) REVIEWER AGENT    Retry with                               │     │
+│      │     - Check quality    CODER (max 3x)                          │     │
+│      │     - Verify criteria                                          │     │
+│      │     - APPROVE/REJECT                                           │     │
+│      │          │                                                     │     │
+│      │          ▼                                                     │     │
+│      │  d) COMMIT & UPDATE                                            │     │
+│      │     - git add .                                                │     │
+│      │     - git commit -m "Phase N.task: description"                │     │
+│      │     - Update plan.json status                                  │     │
+│      │     - Update copilot-instructions.md if needed                 │     │
+│      │                                                                 │     │
+│      └────────────────────────────────────────────────────────────────┘     │
+│          │                                                                   │
+│          ▼                                                                   │
+│  4.3 PHASE COMPLETION CHECK                                                  │
+│      - All tasks complete?                                                   │
+│      - All acceptance criteria met?                                          │
+│      - All tests passing?                                                    │
+│          │                                                                   │
+│      ┌───┴───┐                                                              │
+│      │       │                                                              │
+│     YES     NO ──▶ Continue tasks or handle failure                         │
+│      │                                                                       │
+│      ▼                                                                       │
+│  4.4 PHASE FINALIZATION                                                      │
+│      - Update plan.json: phase.status = "completed"                          │
+│      - Update copilot-instructions.md with learnings                         │
+│      - git commit -m "Complete Phase N: [name]"                              │
+│      - git push origin creation                                              │
+│          │                                                                   │
+│          ▼                                                                   │
+│  4.5 ADVANCE TO NEXT PHASE (or finalize if last)                            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Files Modified During Implementation:**
+| File | When Modified |
+|------|---------------|
+| `.makeapp/plan.json` | After each task completion |
+| `.makeapp/plan.md` | After each task completion (checkboxes) |
+| `.makeapp/status.json` | Continuously during execution |
+| `.github/copilot-instructions.md` | When patterns/learnings discovered |
+| `[source files]` | During coding tasks |
+| `[test files]` | During testing tasks |
+
+##### Step 5: Finalization
+
+| Action | Description |
+|--------|-------------|
+| Final push | Ensure all changes pushed to creation branch |
+| Create PR | PR from `creation` → `main` with full summary |
+| Update status | Mark workflow as complete in status.json |
+| Store memories | Save learnings to memory system |
+| Notify | Send completion notification |
+
+#### Response
+
+```json
+{
+  "appId": "app_xyz789",
+  "name": "my-awesome-app",
+  "owner": "configured-user",
+  "repositoryUrl": "https://github.com/configured-user/my-awesome-app",
+  "workflowId": "wf_abc123",
+  "status": "in-progress",
+  "currentPhase": 1,
+  "totalPhases": 5,
+  "eventsUrl": "/api/v1/apps/configured-user/my-awesome-app/events"
+}
+```
+
+---
+
+### POST `/api/v1/apps/{owner}/{name}/features` - Add Feature to Existing App
+
+Adds a new feature to an existing repository that was previously created or is already checked out.
+
+#### Request Body
+
+```json
+{
+  "name": "email-notifications",
+  "requirements": "Add email notification support for todo item reminders using SendGrid. Users should be able to set reminder times and receive emails 15 minutes before due dates.",
+  "baseBranch": "main",            // Optional: branch to create feature from
+  "createPullRequest": true
+}
+```
+
+#### Key Differences from Create App
+
+| Aspect | Create App | Add Feature |
+|--------|-----------|-------------|
+| Repository | Created new | Already exists |
+| Initial files | Generated from scratch | Analyzed for context |
+| Branch name | `creation` | `feature/{formatted-name}` |
+| copilot-instructions.md | Created new | Updated/appended |
+| Plan scope | Full application | Feature-specific |
+
+#### Workflow Steps
+
+##### Step 1: Repository Analysis & Branch Setup
+
+| Action | Description |
+|--------|-------------|
+| Verify repo exists | Confirm repo is accessible |
+| Analyze codebase | LLM reads existing structure, patterns, dependencies |
+| Load existing memories | Retrieve repository memories for context |
+| Read copilot-instructions.md | Understand existing conventions |
+| Create feature branch | `git checkout -b feature/email-notifications` |
+
+##### Step 2: Feature Plan Generation
+
+LLM generates a feature-specific plan that integrates with existing code:
+
+```json
+{
+  "featureId": "feat_email_notify",
+  "basedOn": {
+    "existingServices": ["src/services/todoService.ts"],
+    "existingModels": ["src/models/todo.ts", "src/models/user.ts"],
+    "existingPatterns": ["async/await", "repository pattern"]
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Email Service Integration",
+      "tasks": [
+        {
+          "id": "1.1",
+          "description": "Add SendGrid dependency and configuration",
+          "files": ["package.json", "src/config/email.ts"],
+          "integrationPoints": ["src/config/index.ts"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+##### Steps 3-5: Same as Create App
+
+Agent setup, phased implementation, and finalization follow the same pattern.
+
+**Branch naming convention:**
+```
+feature/{name-slug}-{YYYYMMDD}-{HHMMSS}
+```
+Example: `feature/email-notifications-20260117-143052`
+
+---
+
+### Complete File/Folder Structure Created
+
+All repositories are created within the configured **sandbox folder**. Each repo contains its own MakeApp working directories to keep temporary data isolated and properly excluded from version control.
+
+**Sandbox Folder Structure:**
+```
+sandbox/                              # Configured sandbox root (all repos go here)
+├── my-awesome-app/                   # Created app repository
+│   ├── .git/
+│   ├── .github/
+│   │   └── copilot-instructions.md   # LLM-generated, dynamically updated
+│   ├── .makeapp/                     # MakeApp workflow data (in repo)
+│   │   ├── plan.json                 # Machine-readable implementation plan
+│   │   ├── plan.md                   # Human-readable plan with checkboxes
+│   │   ├── status.json               # Current workflow state
+│   │   ├── memories.json             # Local memory cache (syncs with API)
+│   │   ├── cache/                    # LLM response cache, API data (repo-specific)
+│   │   ├── logs/                     # Workflow execution logs (repo-specific)
+│   │   ├── temp/                     # Temporary files during operations (repo-specific)
+│   │   └── agents/
+│   │       ├── orchestrator.json     # Orchestrator agent config
+│   │       ├── coder.json            # Coder agent config
+│   │       ├── tester.json           # Tester agent config
+│   │       └── reviewer.json         # Reviewer agent config
+│   ├── .gitignore                    # Excludes .makeapp working folders
+│   ├── README.md                     # LLM-generated from requirements
+│   ├── package.json                  # (or equivalent for project type)
+│   ├── tsconfig.json                 # (TypeScript projects)
+│   ├── src/
+│   │   ├── index.ts                  # Entry point
+│   │   ├── config/
+│   │   ├── routes/
+│   │   ├── services/
+│   │   ├── models/
+│   │   ├── middleware/
+│   │   └── utils/
+│   └── tests/
+│       ├── unit/
+│       └── integration/
+│
+├── another-app/                      # Another created/checked-out repo
+│   ├── .makeapp/                     # Its own isolated MakeApp data
+│   │   ├── cache/
+│   │   ├── logs/
+│   │   └── ...
+│   └── ...
+```
+
+**Required .gitignore Entries:**
+
+Every repository created by MakeApp must include these exclusions in `.gitignore`:
+
+```gitignore
+# MakeApp working directories (temporary/cache data)
+.makeapp/cache/
+.makeapp/logs/
+.makeapp/temp/
+
+# MakeApp files to INCLUDE in version control:
+# - .makeapp/plan.json (implementation plan)
+# - .makeapp/plan.md (human-readable plan)
+# - .makeapp/status.json (workflow state - for recovery)
+# - .makeapp/agents/*.json (agent configurations)
+# - .makeapp/memories.json (optional - depends on team preference)
+```
+
+**Folder Purposes:**
+
+| Folder | Purpose | Gitignored? |
+|--------|---------|-------------|
+| `.makeapp/cache/` | LLM response caching, API response caching to reduce costs/latency | ✅ Yes |
+| `.makeapp/logs/` | Detailed workflow execution logs, agent conversation history | ✅ Yes |
+| `.makeapp/temp/` | Temporary files during code generation, diff staging | ✅ Yes |
+| `.makeapp/agents/` | Agent configuration files (orchestrator, coder, tester, reviewer) | ❌ No - commit these |
+| `.makeapp/plan.json` | Machine-readable implementation plan with phase/task status | ❌ No - commit this |
+| `.makeapp/plan.md` | Human-readable plan with progress checkboxes | ❌ No - commit this |
+| `.makeapp/status.json` | Current workflow state for pause/resume capability | ❌ No - commit this |
+| `.makeapp/memories.json` | Local memory cache (team decides if shared) | ⚠️ Optional |
 
 ---
 
@@ -846,14 +1408,27 @@ public class MakeAppOptions
     public LimitOptions Limits { get; set; } = new();
 }
 
+// NEW: User/Owner configuration for client applications
+public class UserConfiguration
+{
+    public string GitHubUsername { get; set; } = "";
+    public string GitHubOwner { get; set; } = "";  // Can be user or organization
+    public string DefaultBranch { get; set; } = "main";
+    public bool AutoCreateRemote { get; set; } = true;
+    public string SandboxPath { get; set; } = "";  // All repos created/checked out here
+}
+
 public class FolderOptions
 {
-    public string Repos { get; set; } = "";
-    public string Workspace { get; set; } = "";
-    public string Temp { get; set; } = "";
-    public string Logs { get; set; } = "";
-    public string Cache { get; set; } = "";
+    public string Sandbox { get; set; } = "";     // Root folder for all repos
+    public string Repos { get; set; } = "";       // Alias for Sandbox (backward compat)
 }
+
+// Per-repo working directories (stored INSIDE each repo's .makeapp folder)
+// These are NOT configured globally - they're always at {repoPath}/.makeapp/{folder}
+// - cache/  - LLM response caching, API data
+// - logs/   - Workflow execution logs  
+// - temp/   - Temporary files during operations
 
 // etc...
 ```
@@ -863,6 +1438,7 @@ public class FolderOptions
   - defaults.json → user config → environment variables → API parameters
 - [ ] Add configuration validation
 - [ ] Create configuration endpoints
+- [ ] **NEW**: Add user/owner configuration endpoint for client apps
 
 #### 1.3 Health & Diagnostics
 
@@ -872,8 +1448,504 @@ public class FolderOptions
 
 **Deliverables**:
 - Working API with `/health`, `/api/v1/config` endpoints
+- **NEW**: `/api/v1/config/user` endpoint for GitHub user configuration
 - OpenAPI documentation at `/swagger`
 - Comprehensive configuration system
+
+---
+
+### Phase 1.5: App Creation Infrastructure (NEW - Weeks 2-3)
+
+**Objective**: Implement the core infrastructure for creating new applications and adding features.
+
+#### 1.5.1 Repository Creation Service
+
+```csharp
+// MakeApp.Application/Services/RepositoryCreationService.cs
+public interface IRepositoryCreationService
+{
+    Task<CreateAppResult> CreateAppAsync(CreateAppRequest request);
+    Task<RepositoryInfo> CreateGitHubRepositoryAsync(CreateRepoOptions options);
+    Task<string> InitializeLocalRepositoryAsync(string repoPath, InitOptions options);
+    Task GenerateInitialFilesAsync(string repoPath, AppRequirements requirements);
+    Task InitializeMakeAppFoldersAsync(string repoPath);
+}
+
+public class RepositoryCreationService : IRepositoryCreationService
+{
+    private readonly IGitHubService _gitHubService;
+    private readonly IGitService _gitService;
+    private readonly ILlmService _llmService;
+    private readonly IFileGeneratorService _fileGenerator;
+    private readonly UserConfiguration _userConfig;
+    
+    public async Task<CreateAppResult> CreateAppAsync(CreateAppRequest request)
+    {
+        // 1. Create GitHub repository
+        var repoInfo = await _gitHubService.CreateRepositoryAsync(new CreateRepoOptions
+        {
+            Name = request.Name,
+            Owner = request.Owner ?? _userConfig.GitHubOwner,
+            Description = ExtractDescription(request.Requirements),
+            Private = request.IsPrivate,
+            AutoInit = false  // We'll initialize locally
+        });
+        
+        // 2. Clone to SANDBOX folder (all repos go here)
+        var localPath = Path.Combine(_userConfig.SandboxPath, request.Name);
+        await _gitService.CloneAsync(repoInfo.CloneUrl, localPath);
+        
+        // 3. Initialize .makeapp working directories INSIDE the repo
+        await InitializeMakeAppFoldersAsync(localPath);
+        
+        // 4. Generate initial files based on requirements (including .gitignore)
+        await GenerateInitialFilesAsync(localPath, new AppRequirements
+        {
+            Name = request.Name,
+            Requirements = request.Requirements,
+            ProjectType = request.ProjectType ?? await _llmService.DetectProjectTypeAsync(request.Requirements)
+        });
+        
+        // 5. Initial commit and push
+        await _gitService.StageAllAsync(localPath);
+        await _gitService.CommitAsync(localPath, "Initial commit: Project scaffold");
+        await _gitService.PushAsync(localPath, "main", setUpstream: true);
+        
+        // 6. Create creation branch
+        await _gitService.CreateBranchAsync(localPath, "creation");
+        await _gitService.CheckoutAsync(localPath, "creation");
+        
+        return new CreateAppResult
+        {
+            RepositoryInfo = repoInfo,
+            LocalPath = localPath,
+            CurrentBranch = "creation"
+        };
+    }
+    
+    public async Task InitializeMakeAppFoldersAsync(string repoPath)
+    {
+        // Create .makeapp directory structure INSIDE the repo
+        var makeappDir = Path.Combine(repoPath, ".makeapp");
+        var agentsDir = Path.Combine(makeappDir, "agents");
+        var cacheDir = Path.Combine(makeappDir, "cache");
+        var logsDir = Path.Combine(makeappDir, "logs");
+        var tempDir = Path.Combine(makeappDir, "temp");
+        
+        _fileSystem.Directory.CreateDirectory(makeappDir);
+        _fileSystem.Directory.CreateDirectory(agentsDir);
+        _fileSystem.Directory.CreateDirectory(cacheDir);
+        _fileSystem.Directory.CreateDirectory(logsDir);
+        _fileSystem.Directory.CreateDirectory(tempDir);
+        
+        // Create .gitkeep files so empty dirs are tracked (except gitignored ones)
+        await _fileSystem.File.WriteAllTextAsync(
+            Path.Combine(agentsDir, ".gitkeep"), "");
+    }
+    
+    public async Task GenerateInitialFilesAsync(string repoPath, AppRequirements requirements)
+    {
+        // Generate .gitignore with MakeApp exclusions + project-type specific
+        var gitignoreContent = await _llmService.GenerateGitignoreAsync(
+            requirements.ProjectType, 
+            requirements.Requirements);
+        
+        // ALWAYS append MakeApp working directory exclusions
+        gitignoreContent += """
+            
+            # MakeApp working directories (temporary/cache data - do not commit)
+            .makeapp/cache/
+            .makeapp/logs/
+            .makeapp/temp/
+            """;
+        
+        await File.WriteAllTextAsync(
+            Path.Combine(repoPath, ".gitignore"), 
+            gitignoreContent);
+        
+        // Generate README.md
+        var readmeContent = await _llmService.GenerateReadmeAsync(requirements);
+        await File.WriteAllTextAsync(
+            Path.Combine(repoPath, "README.md"), 
+            readmeContent);
+    }
+}
+```
+
+#### 1.5.2 LLM Plan Generator Service
+
+```csharp
+// MakeApp.Application/Services/PlanGeneratorService.cs
+public interface IPlanGeneratorService
+{
+    Task<ImplementationPlan> GeneratePlanAsync(string repoPath, PlanRequest request);
+    Task<ImplementationPlan> UpdatePlanStatusAsync(string repoPath, string taskId, TaskStatus status);
+    Task<ImplementationPlan> GetCurrentPlanAsync(string repoPath);
+    Task SavePlanAsync(string repoPath, ImplementationPlan plan);
+}
+
+public class PlanGeneratorService : IPlanGeneratorService
+{
+    private readonly ICopilotService _copilotService;
+    private readonly IFileSystem _fileSystem;
+    
+    public async Task<ImplementationPlan> GeneratePlanAsync(string repoPath, PlanRequest request)
+    {
+        // Build comprehensive prompt for plan generation
+        var prompt = BuildPlanGenerationPrompt(request);
+        
+        // Use Copilot to generate structured plan
+        var response = await _copilotService.SendStructuredMessageAsync<ImplementationPlan>(
+            sessionId: await GetOrCreateSessionAsync(repoPath),
+            prompt: prompt,
+            schema: ImplementationPlanSchema.JsonSchema);
+        
+        var plan = response.Data;
+        plan.Id = $"plan_{Guid.NewGuid():N}"[..12];
+        plan.CreatedAt = DateTime.UtcNow;
+        plan.Status = PlanStatus.Active;
+        
+        // Save plan files
+        await SavePlanFilesAsync(repoPath, plan);
+        
+        return plan;
+    }
+    
+    private async Task SavePlanFilesAsync(string repoPath, ImplementationPlan plan)
+    {
+        // All MakeApp data goes INSIDE the repo at .makeapp/
+        var makeappDir = Path.Combine(repoPath, ".makeapp");
+        _fileSystem.Directory.CreateDirectory(makeappDir);
+        
+        // Save JSON version (committed to repo)
+        var jsonPath = Path.Combine(makeappDir, "plan.json");
+        await _fileSystem.File.WriteAllTextAsync(
+            jsonPath, 
+            JsonSerializer.Serialize(plan, JsonOptions.Indented));
+        
+        // Save Markdown version with checkboxes (committed to repo)
+        var mdPath = Path.Combine(makeappDir, "plan.md");
+        await _fileSystem.File.WriteAllTextAsync(mdPath, FormatPlanAsMarkdown(plan));
+        
+        // Initialize status file (committed to repo for pause/resume)
+        var statusPath = Path.Combine(makeappDir, "status.json");
+        await _fileSystem.File.WriteAllTextAsync(
+            statusPath,
+            JsonSerializer.Serialize(new WorkflowStatus
+            {
+                CurrentPhase = 1,
+                CurrentTask = plan.Phases[0].Tasks[0].Id,
+                StartedAt = DateTime.UtcNow,
+                Status = "in-progress"
+            }));
+        
+        // Log to repo-specific logs folder (gitignored)
+        var logsDir = Path.Combine(makeappDir, "logs");
+        _fileSystem.Directory.CreateDirectory(logsDir);
+        await _fileSystem.File.AppendAllTextAsync(
+            Path.Combine(logsDir, "workflow.log"),
+            $"[{DateTime.UtcNow:O}] Plan generated with {plan.Phases.Count} phases\n");
+    }
+    
+    private string BuildPlanGenerationPrompt(PlanRequest request)
+    {
+        return $"""
+            Analyze the following requirements and generate a comprehensive, 
+            phased implementation plan. Each phase should be completable 
+            independently and build upon previous phases.
+            
+            ## Requirements
+            {request.Requirements}
+            
+            ## Project Type
+            {request.ProjectType}
+            
+            ## Existing Context (if any)
+            {request.ExistingContext}
+            
+            ## Instructions
+            1. Break down into 3-7 logical phases
+            2. Each phase should have clear acceptance criteria
+            3. Each task should specify which files to create/modify
+            4. Consider dependencies between phases
+            5. Include testing requirements for each phase
+            6. Estimate complexity (simple/moderate/complex) for each task
+            
+            Return a structured JSON plan following the ImplementationPlan schema.
+            """;
+    }
+}
+```
+
+#### 1.5.3 Agent Configuration Service
+
+```csharp
+// MakeApp.Application/Services/AgentConfigurationService.cs
+public interface IAgentConfigurationService
+{
+    Task<AgentConfiguration> CreateAgentConfigAsync(string repoPath, AgentConfigRequest request);
+    Task<AgentConfiguration> GetAgentConfigAsync(string repoPath);
+    Task UpdateAgentConfigAsync(string repoPath, string agentRole, AgentSettings settings);
+    Task<string> GenerateCopilotInstructionsAsync(string repoPath, InstructionsRequest request);
+    Task UpdateCopilotInstructionsAsync(string repoPath, string sectionToUpdate, string newContent);
+}
+
+public class AgentConfigurationService : IAgentConfigurationService
+{
+    public async Task<AgentConfiguration> CreateAgentConfigAsync(
+        string repoPath, AgentConfigRequest request)
+    {
+        var agentsDir = Path.Combine(repoPath, ".makeapp", "agents");
+        _fileSystem.Directory.CreateDirectory(agentsDir);
+        
+        // Generate orchestrator config
+        var orchestrator = new OrchestratorAgent
+        {
+            Role = "orchestrator",
+            Description = "Coordinates all agents and manages phase progression",
+            Responsibilities = new[]
+            {
+                "Monitor phase completion status",
+                "Trigger appropriate agents for each task",
+                "Ensure acceptance criteria are met before phase advancement",
+                "Update plan status after each task completion",
+                "Handle failures and retry logic"
+            },
+            PhaseCriteria = new PhaseCriteria
+            {
+                RequireAllTasksComplete = true,
+                RequireTestsPassing = true,
+                RequireReviewApproval = true
+            }
+        };
+        await SaveAgentConfigAsync(agentsDir, "orchestrator.json", orchestrator);
+        
+        // Generate coder config based on project type
+        var coder = await GenerateCoderConfigAsync(request);
+        await SaveAgentConfigAsync(agentsDir, "coder.json", coder);
+        
+        // Generate tester config
+        var tester = await GenerateTesterConfigAsync(request);
+        await SaveAgentConfigAsync(agentsDir, "tester.json", tester);
+        
+        // Generate reviewer config
+        var reviewer = new ReviewerAgent
+        {
+            Role = "reviewer",
+            Description = "Reviews code quality and approves for commit",
+            Checkpoints = new[]
+            {
+                "Code follows project conventions",
+                "No security vulnerabilities introduced",
+                "Performance considerations addressed",
+                "Documentation updated",
+                "Tests are meaningful and pass"
+            },
+            ApprovalRequired = true
+        };
+        await SaveAgentConfigAsync(agentsDir, "reviewer.json", reviewer);
+        
+        return new AgentConfiguration
+        {
+            Orchestrator = orchestrator,
+            Coder = coder,
+            Tester = tester,
+            Reviewer = reviewer
+        };
+    }
+    
+    public async Task<string> GenerateCopilotInstructionsAsync(
+        string repoPath, InstructionsRequest request)
+    {
+        var prompt = $"""
+            Generate a comprehensive copilot-instructions.md file for the following project:
+            
+            ## Project Name
+            {request.Name}
+            
+            ## Requirements
+            {request.Requirements}
+            
+            ## Project Type
+            {request.ProjectType}
+            
+            ## Agent Orchestration
+            This project uses MakeApp's multi-agent orchestration with:
+            - Orchestrator: Coordinates phases and agents
+            - Coder: Generates implementation code
+            - Tester: Creates and runs tests
+            - Reviewer: Validates quality before commits
+            
+            Include sections for:
+            1. Project Overview
+            2. Architecture Decisions
+            3. Code Style Guidelines (specific to project type)
+            4. File Organization
+            5. Testing Patterns
+            6. Agent Coordination Notes
+            7. Current Phase: [PLACEHOLDER - updated dynamically]
+            
+            Make instructions specific and actionable, not generic.
+            """;
+        
+        var response = await _copilotService.SendMessageAsync(
+            await GetSessionAsync(repoPath), prompt);
+        
+        var instructionsPath = Path.Combine(repoPath, ".github", "copilot-instructions.md");
+        _fileSystem.Directory.CreateDirectory(Path.GetDirectoryName(instructionsPath)!);
+        await _fileSystem.File.WriteAllTextAsync(instructionsPath, response.Content);
+        
+        return instructionsPath;
+    }
+}
+```
+
+#### 1.5.4 Phased Execution Service
+
+```csharp
+// MakeApp.Application/Services/PhasedExecutionService.cs
+public interface IPhasedExecutionService
+{
+    Task<PhaseResult> ExecutePhaseAsync(string repoPath, int phaseNumber);
+    Task<TaskResult> ExecuteTaskAsync(string repoPath, PhaseTask task);
+    Task<bool> ValidatePhaseCompletionAsync(string repoPath, int phaseNumber);
+    Task AdvanceToNextPhaseAsync(string repoPath);
+}
+
+public class PhasedExecutionService : IPhasedExecutionService
+{
+    private readonly ICoderAgentService _coder;
+    private readonly ITesterAgentService _tester;
+    private readonly IReviewerAgentService _reviewer;
+    private readonly IGitService _gitService;
+    private readonly IPlanGeneratorService _planService;
+    private readonly IAgentConfigurationService _agentConfig;
+    
+    public async Task<PhaseResult> ExecutePhaseAsync(string repoPath, int phaseNumber)
+    {
+        var plan = await _planService.GetCurrentPlanAsync(repoPath);
+        var phase = plan.Phases.First(p => p.Phase == phaseNumber);
+        var result = new PhaseResult { Phase = phaseNumber, Name = phase.Name };
+        
+        foreach (var task in phase.Tasks.Where(t => t.Status != TaskStatus.Completed))
+        {
+            var taskResult = await ExecuteTaskAsync(repoPath, task);
+            result.TaskResults.Add(taskResult);
+            
+            if (!taskResult.Success)
+            {
+                result.Success = false;
+                result.FailedAt = task.Id;
+                return result;
+            }
+        }
+        
+        // Validate phase completion
+        if (await ValidatePhaseCompletionAsync(repoPath, phaseNumber))
+        {
+            // Phase commit
+            await _gitService.StageAllAsync(repoPath);
+            await _gitService.CommitAsync(repoPath, $"Complete Phase {phaseNumber}: {phase.Name}");
+            await _gitService.PushAsync(repoPath);
+            
+            // Update copilot-instructions.md with phase learnings
+            await UpdateInstructionsForPhaseCompletionAsync(repoPath, phase);
+            
+            result.Success = true;
+        }
+        
+        return result;
+    }
+    
+    public async Task<TaskResult> ExecuteTaskAsync(string repoPath, PhaseTask task)
+    {
+        var result = new TaskResult { TaskId = task.Id };
+        var maxRetries = 3;
+        var attempt = 0;
+        
+        while (attempt < maxRetries)
+        {
+            attempt++;
+            
+            // 1. CODER: Generate/modify code
+            var codeResult = await _coder.ExecuteTaskAsync(repoPath, task);
+            if (!codeResult.Success)
+            {
+                result.CoderAttempts.Add(codeResult);
+                continue;  // Retry coding
+            }
+            
+            // 2. TESTER: Generate and run tests
+            var testResult = await _tester.ValidateTaskAsync(repoPath, task, codeResult);
+            if (!testResult.Success)
+            {
+                result.TesterResults.Add(testResult);
+                // Feed test failures back to coder for fix
+                task.Context = $"Previous attempt failed tests:\n{testResult.FailureDetails}";
+                continue;  // Retry with feedback
+            }
+            
+            // 3. REVIEWER: Approve code
+            var reviewResult = await _reviewer.ReviewTaskAsync(repoPath, task, codeResult);
+            if (!reviewResult.Approved)
+            {
+                result.ReviewResults.Add(reviewResult);
+                task.Context = $"Review feedback:\n{reviewResult.Feedback}";
+                continue;  // Retry with feedback
+            }
+            
+            // 4. SUCCESS: Commit task
+            await _gitService.StageAllAsync(repoPath);
+            await _gitService.CommitAsync(repoPath, $"Task {task.Id}: {task.Description}");
+            
+            // 5. Update plan status
+            await _planService.UpdatePlanStatusAsync(repoPath, task.Id, TaskStatus.Completed);
+            
+            result.Success = true;
+            return result;
+        }
+        
+        result.Success = false;
+        result.Error = $"Failed after {maxRetries} attempts";
+        return result;
+    }
+    
+    private async Task UpdateInstructionsForPhaseCompletionAsync(
+        string repoPath, ImplementationPhase phase)
+    {
+        // Ask LLM if any learnings should be added to instructions
+        var prompt = $"""
+            Phase "{phase.Name}" is now complete. Review what was implemented and determine
+            if any conventions, patterns, or important decisions should be added to 
+            copilot-instructions.md for consistency in future phases.
+            
+            Completed tasks:
+            {string.Join("\n", phase.Tasks.Select(t => $"- {t.Description}"))}
+            
+            If updates are needed, provide the specific section and content to add.
+            If no updates needed, respond with "NO_UPDATE_NEEDED".
+            """;
+        
+        var response = await _copilotService.SendMessageAsync(
+            await GetSessionAsync(repoPath), prompt);
+        
+        if (!response.Content.Contains("NO_UPDATE_NEEDED"))
+        {
+            await _agentConfig.UpdateCopilotInstructionsAsync(
+                repoPath, 
+                "Phase Learnings", 
+                response.Content);
+        }
+    }
+}
+```
+
+**Deliverables for Phase 1.5:**
+- Repository creation with GitHub integration
+- LLM-driven plan generation
+- Agent configuration file generation  
+- Phased execution engine with retry logic
+- Dynamic copilot-instructions.md updates
 
 ---
 
@@ -2163,77 +3235,110 @@ public interface ICopilotConfigService
 
 **PowerShell Equivalent**: `New-Sandbox`, `Remove-Sandbox`, `Reset-Sandbox`, `Get-SandboxInfo`
 
+The sandbox is now simply the **root folder where all repos are created/checked out**. Per-repo working directories (cache, logs, temp) live inside each repo's `.makeapp/` folder.
+
 ```csharp
 // MakeApp.Application/Services/SandboxService.cs
 public interface ISandboxService
 {
-    Task<SandboxInfo> CreateSandboxAsync(string projectType, bool force = false);
-    Task<bool> DeleteSandboxAsync();
-    Task<SandboxInfo> ResetSandboxAsync(string? projectType = null);
-    Task<SandboxInfo?> GetSandboxInfoAsync();
-    Task<bool> IsSandboxActiveAsync();
+    Task<SandboxInfo> GetSandboxInfoAsync();
+    Task<IEnumerable<RepositoryInfo>> ListSandboxReposAsync();
+    Task<bool> ValidateSandboxPathAsync();
+    Task CleanupRepoWorkingFilesAsync(string repoPath);  // Clean .makeapp/cache, logs, temp
+    Task CleanupAllWorkingFilesAsync();  // Clean working files in all repos
 }
 
 public class SandboxService : ISandboxService
 {
-    private readonly MakeAppOptions _options;
-    private readonly IGitService _gitService;
-    private readonly ICopilotConfigService _configService;
+    private readonly UserConfiguration _userConfig;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<SandboxService> _logger;
 
-    public async Task<SandboxInfo> CreateSandboxAsync(string projectType, bool force = false)
+    public async Task<SandboxInfo> GetSandboxInfoAsync()
     {
-        var sandboxPath = _options.Folders.Sandbox;
-        var repoPath = Path.Combine(sandboxPath, "sandbox-repo");
-
-        if (_fileSystem.Directory.Exists(sandboxPath))
+        var sandboxPath = _userConfig.SandboxPath;
+        
+        if (!_fileSystem.Directory.Exists(sandboxPath))
         {
-            if (force)
+            return new SandboxInfo
             {
-                await DeleteSandboxAsync();
-            }
-            else
+                Path = sandboxPath,
+                Exists = false,
+                RepoCount = 0
+            };
+        }
+        
+        // List all repos in sandbox (directories with .git folder)
+        var repos = await ListSandboxReposAsync();
+        
+        return new SandboxInfo
+        {
+            Path = sandboxPath,
+            Exists = true,
+            RepoCount = repos.Count(),
+            Repositories = repos.ToList(),
+            TotalSize = CalculateDirectorySize(sandboxPath)
+        };
+    }
+    
+    public async Task<IEnumerable<RepositoryInfo>> ListSandboxReposAsync()
+    {
+        var sandboxPath = _userConfig.SandboxPath;
+        var repos = new List<RepositoryInfo>();
+        
+        foreach (var dir in _fileSystem.Directory.GetDirectories(sandboxPath))
+        {
+            var gitDir = Path.Combine(dir, ".git");
+            if (_fileSystem.Directory.Exists(gitDir))
             {
-                throw new ConflictException("Sandbox already exists. Use force=true to overwrite.");
+                repos.Add(new RepositoryInfo
+                {
+                    Name = Path.GetFileName(dir),
+                    Path = dir,
+                    HasMakeAppConfig = _fileSystem.Directory.Exists(
+                        Path.Combine(dir, ".makeapp")),
+                    LastModified = _fileSystem.Directory.GetLastWriteTime(dir)
+                });
             }
         }
-
-        // Create directory structure
-        _fileSystem.Directory.CreateDirectory(sandboxPath);
-        _fileSystem.Directory.CreateDirectory(Path.Combine(sandboxPath, "workspace"));
-        _fileSystem.Directory.CreateDirectory(Path.Combine(sandboxPath, "temp"));
-        _fileSystem.Directory.CreateDirectory(Path.Combine(sandboxPath, "logs"));
-        _fileSystem.Directory.CreateDirectory(Path.Combine(sandboxPath, "cache"));
-        _fileSystem.Directory.CreateDirectory(repoPath);
-
-        // Initialize git repository
-        await _gitService.InitializeRepositoryAsync(repoPath);
-
-        // Create sample files based on project type
-        await CreateSampleFilesAsync(repoPath, projectType);
-
-        // Create initial commit
-        await _gitService.StageChangesAsync(repoPath);
-        await _gitService.CommitAsync(repoPath, "Initial sandbox commit");
-
-        // Add Copilot instructions
-        await _configService.CreateInstructionsAsync(repoPath, projectType, force: true);
-        await _gitService.StageChangesAsync(repoPath);
-        await _gitService.CommitAsync(repoPath, "Add Copilot instructions");
-
-        return await GetSandboxInfoAsync() ?? throw new InvalidOperationException("Failed to create sandbox");
+        
+        return repos;
+    }
+    
+    public async Task CleanupRepoWorkingFilesAsync(string repoPath)
+    {
+        // Clean gitignored working directories inside the repo
+        var foldersToClean = new[] { "cache", "logs", "temp" };
+        
+        foreach (var folder in foldersToClean)
+        {
+            var folderPath = Path.Combine(repoPath, ".makeapp", folder);
+            if (_fileSystem.Directory.Exists(folderPath))
+            {
+                // Delete contents but keep the folder
+                foreach (var file in _fileSystem.Directory.GetFiles(folderPath))
+                {
+                    _fileSystem.File.Delete(file);
+                }
+                foreach (var subdir in _fileSystem.Directory.GetDirectories(folderPath))
+                {
+                    _fileSystem.Directory.Delete(subdir, recursive: true);
+                }
+                
+                _logger.LogInformation("Cleaned {Folder} in {Repo}", folder, repoPath);
+            }
+        }
     }
 }
 ```
 
-- [ ] Implement sandbox CRUD operations
-- [ ] Add sample file generation for different project types
+- [ ] Implement sandbox info and listing operations
+- [ ] Add repo working files cleanup functionality
 - [ ] Create sandbox API endpoints
 
 **Deliverables**:
 - Configuration validation and generation
-- Complete sandbox management API
+- Sandbox management API (simplified - sandbox is just the repo root folder)
 
 ---
 
@@ -2568,18 +3673,41 @@ MakeApp.Api/
 │   ├── api-reference.md
 │   ├── authentication.md
 │   ├── configuration.md
-│   ├── memory-system.md              # NEW: Memory system documentation
+│   ├── memory-system.md
+│   ├── create-app-workflow.md            # NEW: App creation documentation
+│   ├── add-feature-workflow.md           # NEW: Feature addition documentation
+│   ├── agent-orchestration.md            # NEW: Multi-agent system docs
 │   └── migration-guide.md
+├── templates/                             # NEW: Project templates
+│   ├── agents/
+│   │   ├── orchestrator.template.json
+│   │   ├── coder.template.json
+│   │   ├── tester.template.json
+│   │   └── reviewer.template.json
+│   ├── copilot-instructions/
+│   │   ├── node.template.md
+│   │   ├── dotnet.template.md
+│   │   ├── python.template.md
+│   │   └── generic.template.md
+│   └── gitignore/
+│       ├── node.gitignore
+│       ├── dotnet.gitignore
+│       └── python.gitignore
 ├── src/
 │   ├── MakeApp.Api/
 │   │   ├── Controllers/
+│   │   │   ├── AppsController.cs             # NEW: Create/manage apps
+│   │   │   ├── FeaturesController.cs         # UPDATED: Add features to apps
 │   │   │   ├── BranchesController.cs
 │   │   │   ├── ConfigController.cs
+│   │   │   ├── UserConfigController.cs       # NEW: GitHub user configuration
 │   │   │   ├── CopilotController.cs
-│   │   │   ├── FeaturesController.cs
 │   │   │   ├── GitController.cs
 │   │   │   ├── HealthController.cs
-│   │   │   ├── MemoriesController.cs     # NEW: Memory management API
+│   │   │   ├── MemoriesController.cs
+│   │   │   ├── PlansController.cs            # NEW: Implementation plans
+│   │   │   ├── PhasesController.cs           # NEW: Phase management
+│   │   │   ├── AgentsController.cs           # NEW: Agent configurations
 │   │   │   ├── RepositoriesController.cs
 │   │   │   ├── SandboxController.cs
 │   │   │   └── WorkflowsController.cs
@@ -2591,8 +3719,9 @@ MakeApp.Api/
 │   │   ├── Configuration/
 │   │   │   ├── RateLimitingExtensions.cs
 │   │   │   └── SwaggerConfiguration.cs
-│   │   ├── BackgroundJobs/               # NEW: Background job hosting
-│   │   │   └── MemoryMaintenanceJob.cs
+│   │   ├── BackgroundJobs/
+│   │   │   ├── MemoryMaintenanceJob.cs
+│   │   │   └── WorkflowExecutionJob.cs       # NEW: Background workflow runner
 │   │   ├── Program.cs
 │   │   ├── appsettings.json
 │   │   ├── appsettings.Development.json
@@ -2600,60 +3729,107 @@ MakeApp.Api/
 │   │
 │   ├── MakeApp.Core/
 │   │   ├── Entities/
+│   │   │   ├── App.cs                        # NEW: App entity
 │   │   │   ├── Feature.cs
-│   │   │   ├── Memory.cs                 # NEW: Memory entity
-│   │   │   ├── MemoryCitation.cs         # NEW: Citation entity
+│   │   │   ├── ImplementationPlan.cs         # NEW: Plan entity
+│   │   │   ├── ImplementationPhase.cs        # NEW: Phase entity
+│   │   │   ├── PhaseTask.cs                  # NEW: Task entity
+│   │   │   ├── AgentConfiguration.cs         # NEW: Agent config entity
+│   │   │   ├── Memory.cs
+│   │   │   ├── MemoryCitation.cs
 │   │   │   ├── Workflow.cs
 │   │   │   ├── WorkflowStep.cs
 │   │   │   ├── RepositoryInfo.cs
 │   │   │   ├── BranchInfo.cs
 │   │   │   └── SandboxInfo.cs
 │   │   ├── Enums/
+│   │   │   ├── AppStatus.cs                  # NEW
+│   │   │   ├── PhaseStatus.cs                # NEW
+│   │   │   ├── TaskStatus.cs                 # NEW
+│   │   │   ├── AgentRole.cs                  # NEW
 │   │   │   ├── FeatureStatus.cs
 │   │   │   ├── FeaturePriority.cs
-│   │   │   ├── MemoryStatus.cs           # NEW: Memory status enum
+│   │   │   ├── MemoryStatus.cs
 │   │   │   ├── WorkflowPhase.cs
 │   │   │   └── PromptStyle.cs
 │   │   ├── Interfaces/
+│   │   │   ├── IAppService.cs                # NEW
+│   │   │   ├── IRepositoryCreationService.cs # NEW
+│   │   │   ├── IPlanGeneratorService.cs      # NEW
+│   │   │   ├── IAgentConfigurationService.cs # NEW
+│   │   │   ├── IPhasedExecutionService.cs    # NEW
+│   │   │   ├── ICoderAgentService.cs         # NEW
+│   │   │   ├── ITesterAgentService.cs        # NEW
+│   │   │   ├── IReviewerAgentService.cs      # NEW
 │   │   │   ├── IRepositoryService.cs
 │   │   │   ├── IBranchService.cs
 │   │   │   ├── IFeatureService.cs
 │   │   │   ├── IGitService.cs
+│   │   │   ├── IGitHubService.cs             # NEW: GitHub API operations
 │   │   │   ├── ICopilotService.cs
-│   │   │   ├── IMemoryService.cs         # NEW: Memory service interface
-│   │   │   ├── IMemoryRepository.cs      # NEW: Memory repository interface
+│   │   │   ├── IMemoryService.cs
+│   │   │   ├── IMemoryRepository.cs
 │   │   │   ├── IOrchestrationService.cs
 │   │   │   └── ISandboxService.cs
 │   │   ├── Exceptions/
 │   │   │   ├── NotFoundException.cs
 │   │   │   ├── ConflictException.cs
+│   │   │   ├── PhaseNotCompleteException.cs  # NEW
 │   │   │   └── ValidationException.cs
 │   │   └── Configuration/
 │   │       ├── MakeAppOptions.cs
-│   │       └── MemoryOptions.cs          # NEW: Memory configuration
+│   │       ├── UserConfiguration.cs          # NEW
+│   │       ├── AgentOptions.cs               # NEW
+│   │       └── MemoryOptions.cs
 │   │
 │   ├── MakeApp.Application/
 │   │   ├── Services/
+│   │   │   ├── AppService.cs                     # NEW: App lifecycle management
+│   │   │   ├── RepositoryCreationService.cs      # NEW: Create GitHub repos
+│   │   │   ├── PlanGeneratorService.cs           # NEW: LLM plan generation
+│   │   │   ├── AgentConfigurationService.cs      # NEW: Agent config management
+│   │   │   ├── PhasedExecutionService.cs         # NEW: Phase execution engine
+│   │   │   ├── CoderAgentService.cs              # NEW: Code generation agent
+│   │   │   ├── TesterAgentService.cs             # NEW: Test generation/execution
+│   │   │   ├── ReviewerAgentService.cs           # NEW: Code review agent
+│   │   │   ├── FileGeneratorService.cs           # NEW: Generate project files
+│   │   │   ├── CopilotInstructionsService.cs     # NEW: Dynamic instructions
 │   │   │   ├── RepositoryService.cs
 │   │   │   ├── BranchService.cs
 │   │   │   ├── FeatureService.cs
 │   │   │   ├── GitService.cs
 │   │   │   ├── CopilotService.cs
-│   │   │   ├── MemoryService.cs              # NEW: Memory CRUD
-│   │   │   ├── MemoryValidationService.cs    # NEW: Citation validation
-│   │   │   ├── MemoryAwarePromptFormatter.cs # NEW: Memory-enhanced prompts
+│   │   │   ├── MemoryService.cs
+│   │   │   ├── MemoryValidationService.cs
+│   │   │   ├── MemoryAwarePromptFormatter.cs
 │   │   │   ├── OrchestrationService.cs
-│   │   │   ├── MemoryAwareOrchestrationService.cs # NEW: Memory-aware workflows
+│   │   │   ├── MemoryAwareOrchestrationService.cs
 │   │   │   ├── CopilotConfigService.cs
 │   │   │   ├── PromptFormatterService.cs
 │   │   │   ├── SandboxService.cs
 │   │   │   └── NotificationService.cs
 │   │   ├── DTOs/
+│   │   │   ├── Apps/                         # NEW
+│   │   │   │   ├── CreateAppRequest.cs
+│   │   │   │   ├── CreateAppResult.cs
+│   │   │   │   ├── AppDto.cs
+│   │   │   │   └── AppStatusDto.cs
+│   │   │   ├── Plans/                        # NEW
+│   │   │   │   ├── ImplementationPlanDto.cs
+│   │   │   │   ├── PhaseDto.cs
+│   │   │   │   ├── TaskDto.cs
+│   │   │   │   └── PlanStatusDto.cs
+│   │   │   ├── Agents/                       # NEW
+│   │   │   │   ├── AgentConfigDto.cs
+│   │   │   │   ├── TaskResultDto.cs
+│   │   │   │   └── PhaseResultDto.cs
 │   │   │   ├── Features/
+│   │   │   │   ├── AddFeatureRequest.cs      # NEW
+│   │   │   │   └── FeatureDto.cs
 │   │   │   ├── Workflows/
 │   │   │   ├── Repositories/
 │   │   │   ├── Copilot/
-│   │   │   └── Memory/                   # NEW: Memory DTOs
+│   │   │   └── Memory/
 │   │   │       ├── MemoryDto.cs
 │   │   │       ├── CreateMemoryDto.cs
 │   │   │       ├── MemoryValidationResultDto.cs
@@ -2661,43 +3837,62 @@ MakeApp.Api/
 │   │   ├── Mappings/
 │   │   │   └── MappingProfile.cs
 │   │   └── Validators/
+│   │       ├── CreateAppRequestValidator.cs  # NEW
+│   │       ├── AddFeatureRequestValidator.cs # NEW
 │   │       ├── CreateFeatureValidator.cs
-│   │       ├── CreateMemoryValidator.cs  # NEW: Memory validation
+│   │       ├── CreateMemoryValidator.cs
 │   │       └── StartWorkflowValidator.cs
 │   │
 │   └── MakeApp.Infrastructure/
 │       ├── Copilot/
 │       │   ├── CopilotClientManager.cs
 │       │   ├── MakeAppTools.cs
-│       │   └── MemoryStoreTool.cs        # NEW: store_memory tool
+│       │   ├── MemoryStoreTool.cs
+│       │   ├── CoderTools.cs                 # NEW: Coder agent tools
+│       │   ├── TesterTools.cs                # NEW: Tester agent tools
+│       │   └── ReviewerTools.cs              # NEW: Reviewer agent tools
 │       ├── Git/
 │       │   ├── LibGit2SharpGitService.cs
 │       │   └── GitOperations.cs
 │       ├── GitHub/
 │       │   ├── GitHubService.cs
+│       │   ├── RepositoryOperations.cs       # NEW: Repo creation
 │       │   └── PullRequestService.cs
 │       ├── FileSystem/
-│       │   └── FileSystemAdapter.cs
+│       │   ├── FileSystemAdapter.cs
+│       │   └── ProjectTemplateService.cs     # NEW: Project scaffolding
 │       └── Persistence/
+│           ├── AppRepository.cs              # NEW
+│           ├── PlanRepository.cs             # NEW
 │           ├── FeatureRepository.cs
-│           ├── MemoryRepository.cs       # NEW: Memory persistence
+│           ├── MemoryRepository.cs
 │           └── WorkflowRepository.cs
 │
 └── tests/
     ├── MakeApp.Api.Tests/
     │   └── Controllers/
-    │       └── MemoriesControllerTests.cs  # NEW
+    │       ├── AppsControllerTests.cs        # NEW
+    │       ├── FeaturesControllerTests.cs    # NEW
+    │       └── MemoriesControllerTests.cs
     ├── MakeApp.Application.Tests/
     │   └── Services/
-    │       ├── MemoryServiceTests.cs       # NEW
-    │       └── MemoryValidationServiceTests.cs # NEW
+    │       ├── AppServiceTests.cs            # NEW
+    │       ├── PlanGeneratorServiceTests.cs  # NEW
+    │       ├── PhasedExecutionServiceTests.cs # NEW
+    │       ├── MemoryServiceTests.cs
+    │       └── MemoryValidationServiceTests.cs
     ├── MakeApp.Infrastructure.Tests/
     │   ├── Git/
+    │   ├── GitHub/
+    │   │   └── RepositoryOperationsTests.cs  # NEW
     │   ├── Copilot/
-    │   │   └── MemoryStoreToolTests.cs     # NEW
+    │   │   └── MemoryStoreToolTests.cs
     │   └── Persistence/
-    │       └── MemoryRepositoryTests.cs    # NEW
+    │       ├── PlanRepositoryTests.cs        # NEW
+    │       └── MemoryRepositoryTests.cs
     └── MakeApp.E2E.Tests/
+        ├── CreateAppWorkflowTests.cs         # NEW
+        └── AddFeatureWorkflowTests.cs        # NEW
 ```
 
 ---
@@ -2706,17 +3901,18 @@ MakeApp.Api/
 
 | Phase | Duration | Key Deliverables |
 |-------|----------|------------------|
-| Phase 1: Foundation | 2 weeks | Project structure, configuration, health endpoints |
+| Phase 1: Foundation | 2 weeks | Project structure, configuration, health endpoints, user config |
+| **Phase 1.5: App Creation Infrastructure** | **2 weeks** | **Repo creation, plan generation, agent config, phased execution** |
 | Phase 2: Repository & Branch | 2 weeks | Repository scanning, branch management, git operations |
-| Phase 3: Feature Management | 2 weeks | Feature CRUD, import/export, prompt formatting |
-| Phase 4: Copilot SDK | 3 weeks | Copilot integration, streaming, custom tools |
+| Phase 3: Feature Management | 2 weeks | Feature CRUD, import/export, prompt formatting, Add Feature endpoint |
+| Phase 4: Copilot SDK | 3 weeks | Copilot integration, streaming, custom tools, agent tools |
 | Phase 5: Workflow Orchestration | 3 weeks | Orchestration engine, event streaming, workflow control |
-| **Phase 5.5: Agentic Memory** | **2 weeks** | **Memory storage, validation, cross-workflow learning** |
-| Phase 6: Config & Sandbox | 2 weeks | Configuration validation, sandbox management |
+| Phase 5.5: Agentic Memory | 2 weeks | Memory storage, validation, cross-workflow learning |
+| Phase 6: Config & Sandbox | 1 week | Configuration validation, sandbox management |
 | Phase 7: Security & Polish | 2 weeks | Authentication, rate limiting, error handling |
 | Phase 8: Testing & Deployment | 2 weeks | Tests, Docker, CI/CD, documentation |
 
-**Total Estimated Duration**: 20 weeks (5 months)
+**Total Estimated Duration**: 21 weeks (5.25 months)
 
 ---
 

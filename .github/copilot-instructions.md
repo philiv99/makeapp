@@ -75,3 +75,5 @@ Each module in `/modules` should:
 
 ---
 *This file helps GitHub Copilot understand the project context and generate more relevant suggestions.*
+
+remember to keep the docs/convert-to-api.md file steps status up to date

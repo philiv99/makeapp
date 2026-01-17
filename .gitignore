@@ -9,15 +9,63 @@ sandbox/
 # Logs and temp files
 *.log
 *.tmp
+logs/
 
-# IDE
+# =========================
+# .NET / C# Projects
+# =========================
+**/bin/
+**/obj/
+*.user
+*.userosscache
+*.suo
+*.cache
+*.vs/
+packages/
+*.nupkg
+project.lock.json
+.nuget/
+
+# User secrets
+secrets.json
+
+# Test results
+**/TestResults/
+*.trx
+coverage*.xml
+coverage*.json
+
+# Local appsettings overrides
+appsettings.Local.json
+
+# =========================
+# IDE / Editor
+# =========================
 .idea/
 *.swp
 *.swo
+.vscode/.ropeproject
+*.code-workspace
 
+# Rider
+.idea/
+*.sln.iml
+
+# =========================
+# OS Generated
+# =========================
 # Windows
 Thumbs.db
 Desktop.ini
+ehthumbs.db
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# =========================
+# PowerShell
+# =========================
+# Module output
+*.psd1.bak

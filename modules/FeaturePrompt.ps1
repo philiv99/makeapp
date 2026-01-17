@@ -353,6 +353,8 @@ function Format-CopilotPrompt {
         The feature object
     .PARAMETER Style
         Prompt style (concise, detailed, structured)
+    .PARAMETER IncludeTestingRules
+        Whether to include testing requirements in the prompt (default: true)
     #>
     [CmdletBinding()]
     param(
@@ -361,12 +363,60 @@ function Format-CopilotPrompt {
         
         [Parameter()]
         [ValidateSet("concise", "detailed", "structured")]
-        [string]$Style = "structured"
+        [string]$Style = "structured",
+
+        [Parameter()]
+        [switch]$ExcludeTestingRules
     )
+    
+    # Testing rules to be included in prompts (matching convert-to-api.md standards)
+    $testingRulesSection = @"
+
+## Testing Requirements (MANDATORY)
+
+All implementation MUST include corresponding tests. This is a phase gate requirement.
+
+### Unit Tests Required
+- Create unit tests for all new services, validators, and business logic
+- Test naming convention: `MethodName_StateUnderTest_ExpectedBehavior`
+- Cover success paths, error paths, and edge cases
+- Mock external dependencies using Moq or equivalent
+- Minimum 80% code coverage for new code
+
+### Integration Tests Required (for API endpoints)
+- Test actual HTTP request/response cycles
+- Verify correct HTTP status codes (200, 201, 400, 401, 404, 500)
+- Verify response body structure matches expected DTOs
+- Test both valid and invalid inputs
+
+### Test Structure Pattern
+``````
+[Fact]
+public async Task MethodName_ValidInput_ReturnsExpectedResult()
+{
+    // Arrange - set up test data and mocks
+    
+    // Act - call the method under test
+    
+    // Assert - verify expected outcomes
+}
+``````
+
+### Test Checklist Before Completion
+- [ ] All new services have unit test files
+- [ ] All new endpoints have integration tests
+- [ ] Tests pass locally
+- [ ] Coverage meets 80% minimum
+- [ ] No skipped tests without documented reason
+"@
     
     switch ($Style) {
         "concise" {
-            return "Implement: $($Feature.Title). $($Feature.Description)"
+            $prompt = "Implement: $($Feature.Title). $($Feature.Description)"
+            if (-not $ExcludeTestingRules) {
+                $prompt += "`n`nIMPORTANT: Include unit tests for all new code. Follow test naming: MethodName_StateUnderTest_ExpectedBehavior"
+            }
+            return $prompt
         }
         "detailed" {
             $prompt = @"
@@ -381,6 +431,16 @@ $($Feature.AcceptanceCriteria | ForEach-Object { "- $_" } | Out-String)
 
 $($Feature.TechnicalNotes | ForEach-Object { "Note: $_" } | Out-String)
 "@
+            if (-not $ExcludeTestingRules) {
+                $prompt += @"
+
+**Testing Requirements:**
+- Include unit tests for all new code
+- Test naming: MethodName_StateUnderTest_ExpectedBehavior
+- Cover success paths, error paths, and edge cases
+- Target 80% code coverage minimum
+"@
+            }
             return $prompt
         }
         "structured" {
@@ -403,9 +463,15 @@ $($Feature.AffectedAreas | ForEach-Object { "- $_" } | Out-String)
 ## Instructions
 1. Analyze the requirements and create a plan
 2. Implement the necessary changes
-3. Ensure all acceptance criteria are met
-4. Follow existing code patterns and conventions
+3. Create corresponding unit tests
+4. Create integration tests for any API endpoints
+5. Ensure all acceptance criteria are met
+6. Ensure all tests pass before marking complete
+7. Follow existing code patterns and conventions
 "@
+            if (-not $ExcludeTestingRules) {
+                $prompt += $testingRulesSection
+            }
             return $prompt
         }
     }
@@ -447,6 +513,11 @@ function New-FeatureTemplate {
                 "src/components/",
                 "src/services/"
             )
+            TestingRequirements = @(
+                "Unit tests for new services with 80% coverage",
+                "Integration tests for API endpoints",
+                "Tests for error handling paths"
+            )
             Priority = "Medium"
         }
         $template | ConvertTo-Json -Depth 10 | Set-Content $OutputPath -Encoding UTF8
@@ -471,6 +542,13 @@ Describe what this feature should do. Be specific about the expected behavior an
 - Consider using existing pattern from...
 - Must be compatible with...
 - Performance considerations...
+
+## Testing Requirements
+
+- [ ] Unit tests for all new services (80% minimum coverage)
+- [ ] Integration tests for any new API endpoints
+- [ ] Tests for error handling and edge cases
+- [ ] Test naming: MethodName_StateUnderTest_ExpectedBehavior
 
 ## Affected Areas
 

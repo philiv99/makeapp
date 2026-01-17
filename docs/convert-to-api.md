@@ -36,6 +36,248 @@ This document outlines a comprehensive phased plan for converting the MakeApp Po
 
 ---
 
+## Testing Standards & Requirements
+
+This section defines the mandatory testing standards that **MUST** be applied to every phase of implementation. These same rules are incorporated into the MakeApp workflow prompts to ensure consistent testing practices across all generated code.
+
+### Core Testing Principles
+
+| Principle | Description |
+|-----------|-------------|
+| **Test-First Mindset** | Tests should be created alongside or immediately after implementation, never deferred |
+| **Phase Gate Requirement** | No phase can be marked complete without passing tests |
+| **Coverage Minimum** | Each phase must achieve ≥80% code coverage for new code |
+| **Integration Required** | API endpoints must have integration tests, not just unit tests |
+| **Automated Execution** | All tests must be runnable via `dotnet test` or equivalent command |
+
+### Testing Pyramid for Each Phase
+
+```
+                    ┌─────────────────┐
+                    │    E2E Tests    │  ← Full workflow tests (Phase 8 focus)
+                    │   (Minimal)     │
+                    └────────┬────────┘
+                             │
+                    ┌────────┴────────┐
+                    │  Integration    │  ← API endpoint tests, service interactions
+                    │     Tests       │  ← REQUIRED for every phase with endpoints
+                    └────────┬────────┘
+                             │
+           ┌─────────────────┴─────────────────┐
+           │           Unit Tests              │  ← Service logic, validators, mappers
+           │  (Foundation - REQUIRED EVERY     │  ← REQUIRED for every phase
+           │          PHASE)                   │
+           └───────────────────────────────────┘
+```
+
+### Phase Testing Requirements
+
+Each phase MUST include the following test deliverables:
+
+#### Unit Tests (Required Every Phase)
+- **Service Tests**: Every service method must have unit tests
+- **Validator Tests**: All DTOs with validation must have validator tests
+- **Mapper Tests**: AutoMapper profiles must have mapping tests
+- **Mock Dependencies**: Use Moq or NSubstitute for dependency mocking
+- **Edge Cases**: Test null inputs, empty collections, boundary values
+- **Error Paths**: Test exception throwing and error handling
+
+```csharp
+// Example: Required unit test pattern
+public class FeatureServiceTests
+{
+    private readonly Mock<IFeatureRepository> _repositoryMock;
+    private readonly Mock<ILogger<FeatureService>> _loggerMock;
+    private readonly FeatureService _sut;  // System Under Test
+
+    public FeatureServiceTests()
+    {
+        _repositoryMock = new Mock<IFeatureRepository>();
+        _loggerMock = new Mock<ILogger<FeatureService>>();
+        _sut = new FeatureService(_repositoryMock.Object, _loggerMock.Object);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ValidInput_ReturnsCreatedFeature()
+    {
+        // Arrange
+        var dto = new CreateFeatureDto { Title = "Test" };
+        _repositoryMock.Setup(r => r.AddAsync(It.IsAny<Feature>()))
+            .ReturnsAsync((Feature f) => f);
+
+        // Act
+        var result = await _sut.CreateAsync(dto);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Title.Should().Be("Test");
+        _repositoryMock.Verify(r => r.AddAsync(It.IsAny<Feature>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateAsync_NullInput_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => _sut.CreateAsync(null!));
+    }
+}
+```
+
+#### Integration Tests (Required for Phases with API Endpoints)
+- **HTTP Client Tests**: Test actual HTTP request/response cycles
+- **Authentication Tests**: Verify auth requirements are enforced
+- **Status Code Tests**: Verify correct HTTP status codes (200, 201, 400, 401, 404, 500)
+- **Response Body Tests**: Verify response DTOs match expected structure
+- **Database Integration**: Test actual repository operations with test database
+
+```csharp
+// Example: Required integration test pattern
+public class FeaturesControllerIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    private readonly HttpClient _client;
+    private readonly WebApplicationFactory<Program> _factory;
+
+    public FeaturesControllerIntegrationTests(WebApplicationFactory<Program> factory)
+    {
+        _factory = factory;
+        _client = factory.CreateClient();
+    }
+
+    [Fact]
+    public async Task GetFeatures_ReturnsOkWithFeaturesList()
+    {
+        // Act
+        var response = await _client.GetAsync("/api/v1/features");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var features = await response.Content.ReadFromJsonAsync<List<FeatureDto>>();
+        features.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CreateFeature_ValidInput_ReturnsCreatedWithLocation()
+    {
+        // Arrange
+        var dto = new CreateFeatureDto { Title = "Test Feature", Description = "Description" };
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/v1/features", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        response.Headers.Location.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task CreateFeature_InvalidInput_ReturnsBadRequest()
+    {
+        // Arrange
+        var dto = new CreateFeatureDto { Title = "" };  // Invalid - empty title
+
+        // Act
+        var response = await _client.PostAsJsonAsync("/api/v1/features", dto);
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task GetFeature_NonExistent_ReturnsNotFound()
+    {
+        // Act
+        var response = await _client.GetAsync("/api/v1/features/nonexistent-id");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+}
+```
+
+### Test Naming Conventions
+
+Follow the pattern: `MethodName_StateUnderTest_ExpectedBehavior`
+
+| Test Type | Naming Pattern | Example |
+|-----------|----------------|---------|
+| Success Path | `Method_ValidInput_ReturnsExpected` | `CreateFeature_ValidDto_ReturnsCreatedFeature` |
+| Error Path | `Method_InvalidCondition_ThrowsException` | `CreateFeature_NullDto_ThrowsArgumentNull` |
+| Edge Case | `Method_EdgeCondition_HandlesCorrectly` | `GetFeatures_EmptyList_ReturnsEmptyArray` |
+| Integration | `Endpoint_Scenario_ReturnsStatusCode` | `PostFeature_ValidInput_Returns201Created` |
+
+### Phase Completion Checklist
+
+Before ANY phase can be marked complete, verify:
+
+- [ ] All new services have corresponding unit test files
+- [ ] Unit test coverage ≥ 80% for new code
+- [ ] All new API endpoints have integration tests
+- [ ] Integration tests verify success AND error status codes
+- [ ] Tests pass locally with `dotnet test`
+- [ ] No skipped or ignored tests without documented reason
+- [ ] Test assertions use FluentAssertions for readability
+- [ ] Mocks verify expected interactions occurred
+
+### Testing Tools & Libraries
+
+| Tool | Purpose | Required In |
+|------|---------|-------------|
+| **xUnit** | Test framework | All test projects |
+| **FluentAssertions** | Readable assertions | All test projects |
+| **Moq** | Mocking framework | Unit tests |
+| **WebApplicationFactory** | API integration testing | API tests |
+| **TestContainers** | Database integration | E2E tests |
+| **Coverlet** | Code coverage | CI/CD pipeline |
+
+### Agent Configuration for Testing
+
+The `tester.json` agent configuration must enforce these standards:
+
+```json
+{
+  "role": "tester",
+  "description": "Generates and executes tests for implemented code",
+  "responsibilities": [
+    "Generate unit tests for all new service methods",
+    "Generate integration tests for all new API endpoints",
+    "Ensure test coverage meets 80% minimum threshold",
+    "Verify both success and error paths are tested",
+    "Run test suite and report results"
+  ],
+  "testingRules": {
+    "unitTestsRequired": true,
+    "integrationTestsRequired": true,
+    "minimumCoverage": 80,
+    "namingConvention": "MethodName_StateUnderTest_ExpectedBehavior",
+    "requiredAssertions": ["success_path", "error_path", "edge_cases"],
+    "frameworks": {
+      "testFramework": "xunit",
+      "assertions": "FluentAssertions",
+      "mocking": "Moq"
+    }
+  },
+  "validationChecks": [
+    "All services have test files",
+    "All endpoints have integration tests",
+    "Coverage report shows ≥80%",
+    "No tests are skipped without reason",
+    "Tests pass with dotnet test command"
+  ]
+}
+```
+
+### MakeApp Workflow Prompt Integration
+
+The testing rules above **MUST** be incorporated into all prompts generated by MakeApp for feature implementation. The `Format-CopilotPrompt` function and agent configurations must include these testing requirements so that:
+
+1. Every code generation task includes corresponding test generation
+2. The tester agent validates tests meet the standards above
+3. Phase completion requires test validation to pass
+4. PR descriptions include test coverage summary
+
+---
+
 ## Target Architecture
 
 ### Technology Stack
@@ -103,11 +345,11 @@ sandbox/                          # Configured sandbox root folder
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                         CONTROLLER LAYER                             │   │
 │  │  ┌────────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────────┐  │   │
-│  │  │ Repos      │ │ Features     │ │ Branches │ │ Workflows        │  │   │
+│  │  │ Apps       │ │ Features     │ │ Repos    │ │ Workflows        │  │   │
 │  │  │ Controller │ │ Controller   │ │ Ctrl     │ │ Controller       │  │   │
 │  │  └────────────┘ └──────────────┘ └──────────┘ └──────────────────┘  │   │
 │  │  ┌────────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────────┐  │   │
-│  │  │ Config     │ │ Sandbox      │ │ Sessions │ │ Health           │  │   │
+│  │  │ Sandbox    │ │ Branches     │ │ Sessions │ │ Health           │  │   │
 │  │  │ Controller │ │ Controller   │ │ Ctrl     │ │ Controller       │  │   │
 │  │  └────────────┘ └──────────────┘ └──────────┘ └──────────────────┘  │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
@@ -115,15 +357,15 @@ sandbox/                          # Configured sandbox root folder
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                         SERVICE LAYER                                │   │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                 │   │
-│  │  │ Repository   │ │ Branch       │ │ Feature      │                 │   │
+│  │  │ App          │ │ RepoCreation │ │ Feature      │                 │   │
 │  │  │ Service      │ │ Service      │ │ Service      │                 │   │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘                 │   │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                 │   │
-│  │  │ Copilot      │ │ Orchestration│ │ Git          │                 │   │
+│  │  │ PlanGen      │ │ PhasedExec   │ │ Git          │                 │   │
 │  │  │ Service      │ │ Service      │ │ Service      │                 │   │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘                 │   │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                 │   │
-│  │  │ Sandbox      │ │ Config       │ │ Notification │                 │   │
+│  │  │ Sandbox      │ │ Orchestration│ │ Notification │                 │   │
 │  │  │ Service      │ │ Service      │ │ Service      │                 │   │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘                 │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
@@ -156,6 +398,17 @@ sandbox/                          # Configured sandbox root folder
 ---
 
 ## API Endpoint Design
+
+### Documentation & Discovery
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/swagger` | Swagger UI - Interactive API documentation |
+| GET | `/swagger/index.html` | Swagger UI (explicit path) |
+| GET | `/api-docs/v1/swagger.json` | OpenAPI 3.0 specification (JSON format) |
+| GET | `/health` | Health check endpoint |
+| GET | `/health/ready` | Readiness probe for container orchestration |
+| GET | `/health/live` | Liveness probe for container orchestration |
 
 ### Client Configuration
 
@@ -253,10 +506,68 @@ These are the two primary workflow endpoints that drive the entire system:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/sandbox` | Create sandbox |
-| GET | `/api/v1/sandbox` | Get sandbox status |
-| DELETE | `/api/v1/sandbox` | Delete sandbox |
-| POST | `/api/v1/sandbox/reset` | Reset sandbox |
+| GET | `/api/v1/sandbox` | Get sandbox info (path, repo count, total size) |
+| GET | `/api/v1/sandbox/repos` | List all repos in sandbox with status summary |
+| GET | `/api/v1/sandbox/repos/{name}` | Get detailed repo info including git status |
+| GET | `/api/v1/sandbox/repos/{name}/status` | Get detailed pending changes status |
+| DELETE | `/api/v1/sandbox/repos/{name}` | Remove repo from sandbox (requires clean status or force) |
+| DELETE | `/api/v1/sandbox/repos/{name}?force=true` | Force remove repo regardless of pending changes |
+| POST | `/api/v1/sandbox/repos/{name}/cleanup` | Clean working files (cache/logs/temp) for a repo |
+| POST | `/api/v1/sandbox/cleanup` | Clean working files for all repos |
+
+#### Repository Status Response
+
+The status endpoint returns detailed information about pending changes:
+
+```json
+{
+  "repoName": "my-app",
+  "path": "/sandbox/my-app",
+  "currentBranch": "feature/add-auth",
+  "status": "has-pending-changes",  // "clean" | "has-pending-changes"
+  "canRemove": false,
+  "pendingChanges": {
+    "hasUnstagedChanges": true,
+    "hasStagedChanges": false,
+    "hasUnpushedCommits": true,
+    "unstagedFiles": [
+      { "path": "src/auth.ts", "status": "modified" },
+      { "path": "src/config.ts", "status": "added" }
+    ],
+    "stagedFiles": [],
+    "unpushedCommits": [
+      { "hash": "a1b2c3d", "message": "Add authentication module", "date": "2026-01-17T10:30:00Z" }
+    ]
+  },
+  "summary": "2 unstaged files, 1 unpushed commit"
+}
+```
+
+#### Remove Repository Logic
+
+```
+DELETE /api/v1/sandbox/repos/{name}?force={true|false}
+
+┌─────────────────────────────────────────────────────────────┐
+│                    REMOVE REPO FLOW                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. Check repo exists in sandbox                             │
+│     └─ 404 if not found                                      │
+│                                                              │
+│  2. If force=false (default):                                │
+│     ├─ Get repo status                                       │
+│     ├─ Check for unstaged changes     ──▶ 409 Conflict      │
+│     ├─ Check for staged changes       ──▶ 409 Conflict      │
+│     └─ Check for unpushed commits     ──▶ 409 Conflict      │
+│                                                              │
+│  3. If force=true OR status is clean:                        │
+│     ├─ Delete repo folder recursively                        │
+│     ├─ Remove from any active workflows                      │
+│     └─ Return 204 No Content                                 │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### Configuration
 
@@ -448,15 +759,39 @@ Create agent configuration files that define how different AI agents collaborate
 ```json
 {
   "role": "tester",
-  "description": "Generates and runs tests for implemented code",
+  "description": "Generates and executes tests for implemented code",
   "responsibilities": [
-    "Generate unit tests for new functionality",
-    "Run existing test suite",
-    "Report coverage metrics",
-    "Validate acceptance criteria"
+    "Generate unit tests for all new service methods",
+    "Generate integration tests for all new API endpoints",
+    "Ensure test coverage meets 80% minimum threshold",
+    "Verify both success and error paths are tested",
+    "Run test suite and report results with coverage metrics",
+    "Validate all acceptance criteria via tests"
   ],
-  "testFramework": "jest",  // Determined from projectType
-  "minimumCoverage": 80
+  "testingRules": {
+    "unitTestsRequired": true,
+    "integrationTestsRequired": true,
+    "minimumCoverage": 80,
+    "namingConvention": "MethodName_StateUnderTest_ExpectedBehavior",
+    "requiredTestPaths": ["success_path", "error_path", "edge_cases"],
+    "frameworks": {
+      "testFramework": "xunit",
+      "assertions": "FluentAssertions",
+      "mocking": "Moq"
+    }
+  },
+  "validationChecks": [
+    "All services have corresponding test files",
+    "All API endpoints have integration tests",
+    "Coverage report shows ≥80% for new code",
+    "No tests are skipped without documented reason",
+    "All tests pass with dotnet test command"
+  ],
+  "testStructureTemplate": {
+    "arrange": "Set up test data and mocks",
+    "act": "Call the method under test",
+    "assert": "Verify expected outcomes"
+  }
 }
 ```
 
@@ -504,6 +839,35 @@ PostgreSQL storage, and real-time notifications via WebSockets.
 - src/models/ - Database models
 - src/middleware/ - Express middleware
 - src/websocket/ - Socket.io handlers
+- tests/unit/ - Unit tests
+- tests/integration/ - Integration tests
+
+## Testing Standards (MANDATORY)
+### Test Requirements
+- All new services MUST have corresponding unit tests
+- All API endpoints MUST have integration tests
+- Minimum 80% code coverage for new code
+- No phase can be marked complete without passing tests
+
+### Test Naming Convention
+- Pattern: `MethodName_StateUnderTest_ExpectedBehavior`
+- Example: `CreateUser_ValidInput_ReturnsCreatedUser`
+
+### Test Structure (Arrange-Act-Assert)
+```typescript
+describe('ServiceName', () => {
+  it('should do X when Y', async () => {
+    // Arrange - set up test data and mocks
+    // Act - call the method under test
+    // Assert - verify expected outcomes
+  });
+});
+```
+
+### Required Test Coverage
+- Success path (valid inputs, expected flow)
+- Error path (invalid inputs, exceptions)
+- Edge cases (null, empty, boundary values)
 
 ## Current Phase: [PHASE_NAME]
 [Dynamically updated as implementation progresses]
@@ -1452,6 +1816,14 @@ public class FolderOptions
 - OpenAPI documentation at `/swagger`
 - Comprehensive configuration system
 
+**Testing Deliverables (Phase 1):**
+- [ ] Unit tests for configuration service (loading, merging, validation)
+- [ ] Unit tests for options validation
+- [ ] Integration tests for `/health` endpoint
+- [ ] Integration tests for `/api/v1/config` endpoints (GET, PUT)
+- [ ] Integration tests for `/api/v1/config/user` endpoint
+- [ ] Test coverage report showing ≥80% for new code
+
 ---
 
 ### Phase 1.5: App Creation Infrastructure (NEW - Weeks 2-3)
@@ -1947,6 +2319,17 @@ public class PhasedExecutionService : IPhasedExecutionService
 - Phased execution engine with retry logic
 - Dynamic copilot-instructions.md updates
 
+**Testing Deliverables (Phase 1.5):**
+- [ ] Unit tests for `RepositoryCreationService` (mock GitHub API, file system)
+- [ ] Unit tests for `PlanGeneratorService` (mock Copilot, verify plan structure)
+- [ ] Unit tests for `AgentConfigurationService` (verify JSON generation)
+- [ ] Unit tests for `PhasedExecutionService` (mock agents, verify retry logic)
+- [ ] Integration tests for `POST /api/v1/apps` endpoint
+- [ ] Integration tests for `POST /api/v1/apps/{owner}/{name}/features` endpoint
+- [ ] Integration tests verifying `.makeapp/` folder structure creation
+- [ ] Integration tests for plan.json generation and status updates
+- [ ] Test coverage report showing ≥80% for new code
+
 ---
 
 ### Phase 2: Repository & Branch Services (Weeks 3-4)
@@ -2030,7 +2413,14 @@ public interface IBranchService
 // MakeApp.Application/Services/GitService.cs
 public interface IGitService
 {
+    // Status operations
     Task<GitStatus> GetStatusAsync(string repoPath);
+    Task<IReadOnlyList<FileChange>> GetUnstagedChangesAsync(string repoPath);
+    Task<IReadOnlyList<FileChange>> GetStagedChangesAsync(string repoPath);
+    Task<IReadOnlyList<CommitInfo>> GetUnpushedCommitsAsync(string repoPath, string? remoteName = "origin");
+    Task<bool> IsCleanAsync(string repoPath);
+    
+    // Working tree operations
     Task<bool> StageChangesAsync(string repoPath, string pathSpec = ".");
     Task<CommitResult> CommitAsync(string repoPath, string message, CommitOptions? options = null);
     Task<PushResult> PushAsync(string repoPath, PushOptions? options = null);
@@ -2046,7 +2436,19 @@ public interface IGitService
 **Deliverables**:
 - Working repository, branch, and git operation endpoints
 - Integration with LibGit2Sharp and Octokit.NET
-- Comprehensive unit tests
+
+**Testing Deliverables (Phase 2):**
+- [ ] Unit tests for `RepositoryService` (mock file system, verify repo detection)
+- [ ] Unit tests for `BranchService` (mock LibGit2Sharp, verify branch operations)
+- [ ] Unit tests for `GitService` (mock LibGit2Sharp, verify git operations)
+- [ ] Integration tests for `GET /api/v1/repos` endpoint
+- [ ] Integration tests for `GET /api/v1/repos/{owner}/{name}/branches` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/branches` (create branch)
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/commit` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/push` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/pull-requests` endpoint
+- [ ] Test with actual git repository (using TestContainers or temp repo)
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -2139,6 +2541,19 @@ public class PromptFormatterService : IPromptFormatterService
 - Feature CRUD endpoints
 - Markdown/JSON import support
 - Prompt formatting service
+
+**Testing Deliverables (Phase 3):**
+- [ ] Unit tests for `FeatureService` (CRUD operations with mocked repository)
+- [ ] Unit tests for `PromptFormatterService` (all prompt styles)
+- [ ] Unit tests for Markdown parser (various markdown structures)
+- [ ] Unit tests for JSON import validation
+- [ ] Integration tests for `GET /api/v1/features` endpoint
+- [ ] Integration tests for `POST /api/v1/features` endpoint (with validation errors)
+- [ ] Integration tests for `PUT /api/v1/features/{id}` endpoint
+- [ ] Integration tests for `DELETE /api/v1/features/{id}` endpoint
+- [ ] Integration tests for `POST /api/v1/features/import` (JSON and Markdown)
+- [ ] Integration tests for `GET /api/v1/features/{id}/prompt` endpoint
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -2351,6 +2766,18 @@ public static class MakeAppTools
 - Copilot session management
 - Streaming response support via SSE
 - Custom tools for file/git operations
+
+**Testing Deliverables (Phase 4):**
+- [ ] Unit tests for `CopilotClientManager` (mock SDK client lifecycle)
+- [ ] Unit tests for `CopilotService` (session creation, message handling)
+- [ ] Unit tests for custom tools (file operations, git operations)
+- [ ] Integration tests for `POST /api/v1/copilot/sessions` endpoint
+- [ ] Integration tests for `GET /api/v1/copilot/sessions/{id}` endpoint
+- [ ] Integration tests for `POST /api/v1/copilot/sessions/{id}/messages` endpoint
+- [ ] Integration tests for `GET /api/v1/copilot/sessions/{id}/stream` (SSE streaming)
+- [ ] Integration tests for `DELETE /api/v1/copilot/sessions/{id}` endpoint
+- [ ] Mock Copilot SDK for deterministic testing
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -2569,6 +2996,19 @@ public class WorkflowsController : ControllerBase
 - Complete workflow orchestration engine
 - Real-time event streaming
 - Workflow control API
+
+**Testing Deliverables (Phase 5):**
+- [ ] Unit tests for `OrchestrationService` (workflow state machine, phase transitions)
+- [ ] Unit tests for `WorkflowRepository` (persistence operations)
+- [ ] Unit tests for orchestrator agent logic (task coordination)
+- [ ] Unit tests for coder, tester, reviewer agent interactions
+- [ ] Integration tests for `POST /api/v1/workflows` endpoint
+- [ ] Integration tests for `GET /api/v1/workflows/{id}` endpoint
+- [ ] Integration tests for `GET /api/v1/workflows/{id}/events` (SSE streaming)
+- [ ] Integration tests for `POST /api/v1/workflows/{id}/abort` endpoint
+- [ ] Integration tests for `POST /api/v1/workflows/{id}/retry` endpoint
+- [ ] E2E test for complete workflow execution (mock Copilot)
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -3204,6 +3644,20 @@ public class MemoryMaintenanceJob : IHostedService, IDisposable
 - Background maintenance jobs
 - Memory statistics and reporting
 
+**Testing Deliverables (Phase 5.5):**
+- [ ] Unit tests for `MemoryService` (CRUD, expiration, filtering)
+- [ ] Unit tests for `MemoryValidationService` (citation parsing, file verification)
+- [ ] Unit tests for `MemoryStoreToolFactory` (Copilot tool integration)
+- [ ] Unit tests for memory expiration logic (28-day TTL)
+- [ ] Unit tests for `MemoryMaintenanceJob` (cleanup, statistics)
+- [ ] Integration tests for `GET /api/v1/repos/{owner}/{name}/memories` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/memories` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/memories/{id}/validate` endpoint
+- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/memories/{id}/refresh` endpoint
+- [ ] Integration tests for `GET /api/v1/repos/{owner}/{name}/memories/by-file` endpoint
+- [ ] Test memory validation with real/mock file system
+- [ ] Test coverage report showing ≥80% for new code
+
 ---
 
 ### Phase 6: Configuration & Sandbox Management (Weeks 14-15)
@@ -3241,16 +3695,100 @@ The sandbox is now simply the **root folder where all repos are created/checked 
 // MakeApp.Application/Services/SandboxService.cs
 public interface ISandboxService
 {
+    // Sandbox-level operations
     Task<SandboxInfo> GetSandboxInfoAsync();
-    Task<IEnumerable<RepositoryInfo>> ListSandboxReposAsync();
+    Task<IEnumerable<RepositorySummary>> ListSandboxReposAsync();
     Task<bool> ValidateSandboxPathAsync();
-    Task CleanupRepoWorkingFilesAsync(string repoPath);  // Clean .makeapp/cache, logs, temp
-    Task CleanupAllWorkingFilesAsync();  // Clean working files in all repos
+    
+    // Repo-level operations
+    Task<RepositoryStatus> GetRepoStatusAsync(string repoName);
+    Task<RemoveResult> RemoveRepoAsync(string repoName, bool force = false);
+    Task CleanupRepoWorkingFilesAsync(string repoName);
+    Task CleanupAllWorkingFilesAsync();
+}
+
+// MakeApp.Core/Entities/RepositoryStatus.cs
+public class RepositoryStatus
+{
+    public string RepoName { get; set; } = "";
+    public string Path { get; set; } = "";
+    public string CurrentBranch { get; set; } = "";
+    public RepoStatusType Status { get; set; }
+    public bool CanRemove => Status == RepoStatusType.Clean;
+    public PendingChanges PendingChanges { get; set; } = new();
+    public string Summary { get; set; } = "";
+}
+
+public enum RepoStatusType
+{
+    Clean,
+    HasPendingChanges,
+    Unknown
+}
+
+public class PendingChanges
+{
+    public bool HasUnstagedChanges { get; set; }
+    public bool HasStagedChanges { get; set; }
+    public bool HasUnpushedCommits { get; set; }
+    public List<FileChange> UnstagedFiles { get; set; } = new();
+    public List<FileChange> StagedFiles { get; set; } = new();
+    public List<CommitInfo> UnpushedCommits { get; set; } = new();
+    
+    public bool HasAnyPendingChanges => 
+        HasUnstagedChanges || HasStagedChanges || HasUnpushedCommits;
+}
+
+public class FileChange
+{
+    public string Path { get; set; } = "";
+    public string Status { get; set; } = "";  // modified, added, deleted, renamed
+}
+
+public class CommitInfo
+{
+    public string Hash { get; set; } = "";
+    public string Message { get; set; } = "";
+    public DateTime Date { get; set; }
+}
+
+public class RemoveResult
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public RepositoryStatus? BlockingStatus { get; set; }  // Populated if removal blocked
+}
+
+// MakeApp.Core/Entities/RepositorySummary.cs
+public class RepositorySummary
+{
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public string CurrentBranch { get; set; } = "";
+    public RepoStatusType Status { get; set; }
+    public bool HasMakeAppConfig { get; set; }
+    public bool CanRemove => Status == RepoStatusType.Clean;
+    public string StatusSummary { get; set; } = "";
+    public int UnstagedCount { get; set; }
+    public int StagedCount { get; set; }
+    public int UnpushedCount { get; set; }
+    public DateTime LastModified { get; set; }
+}
+
+// MakeApp.Core/Entities/SandboxInfo.cs
+public class SandboxInfo
+{
+    public string Path { get; set; } = "";
+    public bool Exists { get; set; }
+    public int RepoCount { get; set; }
+    public List<RepositorySummary> Repositories { get; set; } = new();
+    public long TotalSize { get; set; }
 }
 
 public class SandboxService : ISandboxService
 {
     private readonly UserConfiguration _userConfig;
+    private readonly IGitService _gitService;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<SandboxService> _logger;
 
@@ -3268,7 +3806,6 @@ public class SandboxService : ISandboxService
             };
         }
         
-        // List all repos in sandbox (directories with .git folder)
         var repos = await ListSandboxReposAsync();
         
         return new SandboxInfo
@@ -3281,23 +3818,27 @@ public class SandboxService : ISandboxService
         };
     }
     
-    public async Task<IEnumerable<RepositoryInfo>> ListSandboxReposAsync()
+    public async Task<IEnumerable<RepositorySummary>> ListSandboxReposAsync()
     {
         var sandboxPath = _userConfig.SandboxPath;
-        var repos = new List<RepositoryInfo>();
+        var repos = new List<RepositorySummary>();
         
         foreach (var dir in _fileSystem.Directory.GetDirectories(sandboxPath))
         {
             var gitDir = Path.Combine(dir, ".git");
             if (_fileSystem.Directory.Exists(gitDir))
             {
-                repos.Add(new RepositoryInfo
+                var status = await GetRepoStatusAsync(Path.GetFileName(dir));
+                repos.Add(new RepositorySummary
                 {
                     Name = Path.GetFileName(dir),
                     Path = dir,
                     HasMakeAppConfig = _fileSystem.Directory.Exists(
                         Path.Combine(dir, ".makeapp")),
-                    LastModified = _fileSystem.Directory.GetLastWriteTime(dir)
+                    LastModified = _fileSystem.Directory.GetLastWriteTime(dir),
+                    Status = status.Status,
+                    CanRemove = status.CanRemove,
+                    StatusSummary = status.Summary
                 });
             }
         }
@@ -3305,8 +3846,136 @@ public class SandboxService : ISandboxService
         return repos;
     }
     
-    public async Task CleanupRepoWorkingFilesAsync(string repoPath)
+    public async Task<RepositoryStatus> GetRepoStatusAsync(string repoName)
     {
+        var repoPath = Path.Combine(_userConfig.SandboxPath, repoName);
+        
+        if (!_fileSystem.Directory.Exists(repoPath))
+        {
+            throw new NotFoundException($"Repository '{repoName}' not found in sandbox");
+        }
+        
+        var status = new RepositoryStatus
+        {
+            RepoName = repoName,
+            Path = repoPath,
+            CurrentBranch = await _gitService.GetCurrentBranchAsync(repoPath)
+        };
+        
+        // Check for unstaged changes
+        var unstagedChanges = await _gitService.GetUnstagedChangesAsync(repoPath);
+        status.PendingChanges.HasUnstagedChanges = unstagedChanges.Any();
+        status.PendingChanges.UnstagedFiles = unstagedChanges.Select(f => new FileChange
+        {
+            Path = f.Path,
+            Status = f.Status.ToString().ToLower()
+        }).ToList();
+        
+        // Check for staged changes
+        var stagedChanges = await _gitService.GetStagedChangesAsync(repoPath);
+        status.PendingChanges.HasStagedChanges = stagedChanges.Any();
+        status.PendingChanges.StagedFiles = stagedChanges.Select(f => new FileChange
+        {
+            Path = f.Path,
+            Status = f.Status.ToString().ToLower()
+        }).ToList();
+        
+        // Check for unpushed commits
+        var unpushedCommits = await _gitService.GetUnpushedCommitsAsync(repoPath);
+        status.PendingChanges.HasUnpushedCommits = unpushedCommits.Any();
+        status.PendingChanges.UnpushedCommits = unpushedCommits.Select(c => new CommitInfo
+        {
+            Hash = c.Sha[..7],
+            Message = c.MessageShort,
+            Date = c.Author.When.DateTime
+        }).ToList();
+        
+        // Determine overall status
+        status.Status = status.PendingChanges.HasAnyPendingChanges 
+            ? RepoStatusType.HasPendingChanges 
+            : RepoStatusType.Clean;
+        
+        // Build summary
+        var summaryParts = new List<string>();
+        if (status.PendingChanges.HasUnstagedChanges)
+            summaryParts.Add($"{status.PendingChanges.UnstagedFiles.Count} unstaged file(s)");
+        if (status.PendingChanges.HasStagedChanges)
+            summaryParts.Add($"{status.PendingChanges.StagedFiles.Count} staged file(s)");
+        if (status.PendingChanges.HasUnpushedCommits)
+            summaryParts.Add($"{status.PendingChanges.UnpushedCommits.Count} unpushed commit(s)");
+        
+        status.Summary = summaryParts.Any() 
+            ? string.Join(", ", summaryParts) 
+            : "Clean - no pending changes";
+        
+        return status;
+    }
+    
+    public async Task<RemoveResult> RemoveRepoAsync(string repoName, bool force = false)
+    {
+        var repoPath = Path.Combine(_userConfig.SandboxPath, repoName);
+        
+        if (!_fileSystem.Directory.Exists(repoPath))
+        {
+            throw new NotFoundException($"Repository '{repoName}' not found in sandbox");
+        }
+        
+        // Check status unless force is true
+        if (!force)
+        {
+            var status = await GetRepoStatusAsync(repoName);
+            
+            if (!status.CanRemove)
+            {
+                _logger.LogWarning(
+                    "Cannot remove repo {Repo}: {Summary}", 
+                    repoName, status.Summary);
+                    
+                return new RemoveResult
+                {
+                    Success = false,
+                    Error = $"Repository has pending changes: {status.Summary}. " +
+                            "Commit and push changes, or use force=true to remove anyway.",
+                    BlockingStatus = status
+                };
+            }
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Force removing repo {Repo} - pending changes will be lost", 
+                repoName);
+        }
+        
+        try
+        {
+            // Remove the directory recursively
+            _fileSystem.Directory.Delete(repoPath, recursive: true);
+            
+            _logger.LogInformation("Removed repository {Repo} from sandbox", repoName);
+            
+            return new RemoveResult { Success = true };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove repository {Repo}", repoName);
+            return new RemoveResult
+            {
+                Success = false,
+                Error = $"Failed to remove repository: {ex.Message}"
+            };
+        }
+    }
+    
+    public async Task CleanupRepoWorkingFilesAsync(string repoName)
+    {
+        var repoPath = Path.Combine(_userConfig.SandboxPath, repoName);
+        
+        if (!_fileSystem.Directory.Exists(repoPath))
+        {
+            throw new NotFoundException($"Repository '{repoName}' not found in sandbox");
+        }
+        
         // Clean gitignored working directories inside the repo
         var foldersToClean = new[] { "cache", "logs", "temp" };
         
@@ -3315,7 +3984,6 @@ public class SandboxService : ISandboxService
             var folderPath = Path.Combine(repoPath, ".makeapp", folder);
             if (_fileSystem.Directory.Exists(folderPath))
             {
-                // Delete contents but keep the folder
                 foreach (var file in _fileSystem.Directory.GetFiles(folderPath))
                 {
                     _fileSystem.File.Delete(file);
@@ -3325,20 +3993,148 @@ public class SandboxService : ISandboxService
                     _fileSystem.Directory.Delete(subdir, recursive: true);
                 }
                 
-                _logger.LogInformation("Cleaned {Folder} in {Repo}", folder, repoPath);
+                _logger.LogInformation("Cleaned {Folder} in {Repo}", folder, repoName);
             }
+        }
+    }
+    
+    public async Task CleanupAllWorkingFilesAsync()
+    {
+        var repos = await ListSandboxReposAsync();
+        foreach (var repo in repos)
+        {
+            await CleanupRepoWorkingFilesAsync(repo.Name);
         }
     }
 }
 ```
 
-- [ ] Implement sandbox info and listing operations
-- [ ] Add repo working files cleanup functionality
+#### 6.3 Sandbox Controller
+
+```csharp
+// MakeApp.Api/Controllers/SandboxController.cs
+[ApiController]
+[Route("api/v1/sandbox")]
+public class SandboxController : ControllerBase
+{
+    private readonly ISandboxService _sandboxService;
+    
+    /// <summary>
+    /// Get sandbox information (path, repo count, size)
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(SandboxInfoDto), 200)]
+    public async Task<ActionResult<SandboxInfoDto>> GetSandboxInfo()
+    {
+        var info = await _sandboxService.GetSandboxInfoAsync();
+        return Ok(info.ToDto());
+    }
+    
+    /// <summary>
+    /// List all repositories in sandbox with status summary
+    /// </summary>
+    [HttpGet("repos")]
+    [ProducesResponseType(typeof(IEnumerable<RepositorySummaryDto>), 200)]
+    public async Task<ActionResult<IEnumerable<RepositorySummaryDto>>> ListRepos()
+    {
+        var repos = await _sandboxService.ListSandboxReposAsync();
+        return Ok(repos.Select(r => r.ToDto()));
+    }
+    
+    /// <summary>
+    /// Get detailed status for a specific repository
+    /// </summary>
+    [HttpGet("repos/{name}/status")]
+    [ProducesResponseType(typeof(RepositoryStatusDto), 200)]
+    [ProducesResponseType(404)]
+    public async Task<ActionResult<RepositoryStatusDto>> GetRepoStatus(string name)
+    {
+        var status = await _sandboxService.GetRepoStatusAsync(name);
+        return Ok(status.ToDto());
+    }
+    
+    /// <summary>
+    /// Remove a repository from sandbox
+    /// </summary>
+    /// <remarks>
+    /// By default, removal is blocked if the repo has:
+    /// - Unstaged changes
+    /// - Staged changes  
+    /// - Unpushed commits
+    /// 
+    /// Use force=true to remove regardless of pending changes.
+    /// </remarks>
+    [HttpDelete("repos/{name}")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(typeof(RemoveResultDto), 409)]  // Conflict - has pending changes
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> RemoveRepo(
+        string name, 
+        [FromQuery] bool force = false)
+    {
+        var result = await _sandboxService.RemoveRepoAsync(name, force);
+        
+        if (!result.Success)
+        {
+            return Conflict(new RemoveResultDto
+            {
+                Success = false,
+                Error = result.Error,
+                BlockingStatus = result.BlockingStatus?.ToDto()
+            });
+        }
+        
+        return NoContent();
+    }
+    
+    /// <summary>
+    /// Clean working files (cache/logs/temp) for a specific repo
+    /// </summary>
+    [HttpPost("repos/{name}/cleanup")]
+    [ProducesResponseType(204)]
+    [ProducesResponseType(404)]
+    public async Task<IActionResult> CleanupRepo(string name)
+    {
+        await _sandboxService.CleanupRepoWorkingFilesAsync(name);
+        return NoContent();
+    }
+    
+    /// <summary>
+    /// Clean working files for all repos in sandbox
+    /// </summary>
+    [HttpPost("cleanup")]
+    [ProducesResponseType(204)]
+    public async Task<IActionResult> CleanupAll()
+    {
+        await _sandboxService.CleanupAllWorkingFilesAsync();
+        return NoContent();
+    }
+}
+```
+
+- [ ] Implement sandbox info and repo listing
+- [ ] Add repository status checking (unstaged, staged, unpushed)
+- [ ] Implement safe repo removal with force option
+- [ ] Add working files cleanup functionality
 - [ ] Create sandbox API endpoints
 
 **Deliverables**:
 - Configuration validation and generation
-- Sandbox management API (simplified - sandbox is just the repo root folder)
+- Complete sandbox management API with status checking and safe removal
+
+**Testing Deliverables (Phase 6):**
+- [ ] Unit tests for `CopilotConfigService` (instruction validation, MCP validation)
+- [ ] Unit tests for `SandboxService` (repo detection, status checking, cleanup)
+- [ ] Unit tests for repo removal logic (clean status check, force removal)
+- [ ] Unit tests for pending changes detection (unstaged, staged, unpushed)
+- [ ] Integration tests for `GET /api/v1/sandbox` endpoint
+- [ ] Integration tests for `GET /api/v1/sandbox/repos` endpoint
+- [ ] Integration tests for `GET /api/v1/sandbox/repos/{name}/status` endpoint
+- [ ] Integration tests for `DELETE /api/v1/sandbox/repos/{name}` (with and without force)
+- [ ] Integration tests for `POST /api/v1/sandbox/repos/{name}/cleanup` endpoint
+- [ ] Integration tests for `PUT /api/v1/repos/{owner}/{name}/config/copilot-instructions` endpoint
+- [ ] Test sandbox operations with mock file system
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -3505,22 +4301,96 @@ public static IServiceCollection AddMakeAppSwagger(this IServiceCollection servi
                 Array.Empty<string>()
             }
         });
+
+        // Include XML comments for API documentation
+        var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+        var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+        if (File.Exists(xmlPath))
+        {
+            c.IncludeXmlComments(xmlPath);
+        }
     });
 
     return services;
 }
+
+public static IApplicationBuilder UseMakeAppSwagger(this IApplicationBuilder app)
+{
+    app.UseSwagger(c =>
+    {
+        c.RouteTemplate = "api-docs/{documentName}/swagger.json";
+    });
+
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/api-docs/v1/swagger.json", "MakeApp API v1");
+        c.RoutePrefix = "swagger";  // Swagger UI at /swagger
+        c.DocExpansion(DocExpansion.None);
+        c.DefaultModelsExpandDepth(-1);
+        c.DisplayRequestDuration();
+        c.EnableFilter();
+        c.EnableDeepLinking();
+    });
+
+    return app;
+}
 ```
 
+**Program.cs Swagger Setup:**
+```csharp
+// In Program.cs
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services
+builder.Services.AddMakeAppSwagger();
+// ... other services
+
+var app = builder.Build();
+
+// Configure middleware pipeline
+if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
+{
+    app.UseMakeAppSwagger();
+}
+
+// ... rest of middleware
+app.Run();
+```
+
+**Swagger Endpoints:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /swagger` | Swagger UI interactive documentation |
+| `GET /swagger/index.html` | Swagger UI (explicit path) |
+| `GET /api-docs/v1/swagger.json` | OpenAPI 3.0 specification (JSON) |
+
 - [ ] Configure comprehensive OpenAPI documentation
-- [ ] Generate TypeScript client
-- [ ] Generate C# client library
+- [ ] Add XML documentation comments to all controllers
+- [ ] Generate TypeScript client from OpenAPI spec
+- [ ] Generate C# client library from OpenAPI spec
 - [ ] Add API versioning documentation
+- [ ] Configure Swagger UI with examples and descriptions
 
 **Deliverables**:
 - Secure authentication system
 - Rate limiting and throttling
 - Comprehensive error handling
 - Complete API documentation
+
+**Testing Deliverables (Phase 7):**
+- [ ] Unit tests for JWT token generation and validation
+- [ ] Unit tests for authorization policies
+- [ ] Unit tests for rate limiting middleware
+- [ ] Unit tests for error handling middleware
+- [ ] Unit tests for validation pipelines
+- [ ] Integration tests verifying authentication on protected endpoints
+- [ ] Integration tests verifying 401/403 responses for unauthorized requests
+- [ ] Integration tests for rate limiting (verify 429 responses)
+- [ ] Integration tests for validation error responses (400 with problem details)
+- [ ] Integration tests for global error handling (500 responses)
+- [ ] Security scan/penetration test setup
+- [ ] Test coverage report showing ≥80% for new code
 
 ---
 
@@ -3740,6 +4610,12 @@ MakeApp.Api/
 │   │   │   ├── Workflow.cs
 │   │   │   ├── WorkflowStep.cs
 │   │   │   ├── RepositoryInfo.cs
+│   │   │   ├── RepositoryStatus.cs           # NEW: Git status tracking
+│   │   │   ├── RepositorySummary.cs          # NEW: Repo list summary
+│   │   │   ├── PendingChanges.cs             # NEW: Unstaged/staged/unpushed
+│   │   │   ├── FileChange.cs                 # NEW: Individual file change
+│   │   │   ├── CommitInfo.cs                 # NEW: Unpushed commit info
+│   │   │   ├── RemoveResult.cs               # NEW: Repo removal result
 │   │   │   ├── BranchInfo.cs
 │   │   │   └── SandboxInfo.cs
 │   │   ├── Enums/
@@ -3747,6 +4623,8 @@ MakeApp.Api/
 │   │   │   ├── PhaseStatus.cs                # NEW
 │   │   │   ├── TaskStatus.cs                 # NEW
 │   │   │   ├── AgentRole.cs                  # NEW
+│   │   │   ├── ChangeType.cs                 # NEW: Modified/Added/Deleted/Renamed
+│   │   │   ├── RepoStatusType.cs             # NEW: Clean/HasPendingChanges/Unknown
 │   │   │   ├── FeatureStatus.cs
 │   │   │   ├── FeaturePriority.cs
 │   │   │   ├── MemoryStatus.cs
@@ -3766,14 +4644,18 @@ MakeApp.Api/
 │   │   │   ├── IFeatureService.cs
 │   │   │   ├── IGitService.cs
 │   │   │   ├── IGitHubService.cs             # NEW: GitHub API operations
+│   │   │   ├── ILlmService.cs                # NEW: LLM integration abstraction
+│   │   │   ├── IFileGeneratorService.cs      # NEW: File generation from templates
 │   │   │   ├── ICopilotService.cs
 │   │   │   ├── IMemoryService.cs
 │   │   │   ├── IMemoryRepository.cs
 │   │   │   ├── IOrchestrationService.cs
+│   │   │   ├── IFileSystem.cs                # NEW: File system abstraction
 │   │   │   └── ISandboxService.cs
 │   │   ├── Exceptions/
 │   │   │   ├── NotFoundException.cs
 │   │   │   ├── ConflictException.cs
+│   │   │   ├── PendingChangesException.cs    # NEW: Thrown when repo has uncommitted changes
 │   │   │   ├── PhaseNotCompleteException.cs  # NEW
 │   │   │   └── ValidationException.cs
 │   │   └── Configuration/
@@ -3826,6 +4708,14 @@ MakeApp.Api/
 │   │   │   ├── Features/
 │   │   │   │   ├── AddFeatureRequest.cs      # NEW
 │   │   │   │   └── FeatureDto.cs
+│   │   │   ├── Sandbox/                      # NEW
+│   │   │   │   ├── RepositoryStatusDto.cs
+│   │   │   │   ├── RepositorySummaryDto.cs
+│   │   │   │   ├── SandboxInfoDto.cs
+│   │   │   │   ├── PendingChangesDto.cs
+│   │   │   │   ├── FileChangeDto.cs
+│   │   │   │   ├── CommitInfoDto.cs
+│   │   │   │   └── RemoveResultDto.cs
 │   │   │   ├── Workflows/
 │   │   │   ├── Repositories/
 │   │   │   ├── Copilot/

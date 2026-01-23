@@ -1819,12 +1819,12 @@ public class FolderOptions
 - Comprehensive configuration system
 
 **Testing Deliverables (Phase 1):**
-- [ ] Unit tests for configuration service (loading, merging, validation)
-- [ ] Unit tests for options validation
-- [ ] Integration tests for `/health` endpoint
-- [ ] Integration tests for `/api/v1/config` endpoints (GET, PUT)
-- [ ] Integration tests for `/api/v1/config/user` endpoint
-- [ ] Test coverage report showing ≥80% for new code
+- [x] Unit tests for configuration service (loading, merging, validation)
+- [x] Unit tests for options validation
+- [x] Integration tests for `/health` endpoint
+- [x] Integration tests for `/api/v1/config` endpoints (GET, PUT)
+- [x] Integration tests for `/api/v1/config/user` endpoint
+- [x] Test coverage report showing ≥80% for new code (151 tests passing)
 
 ---
 
@@ -2322,15 +2322,15 @@ public class PhasedExecutionService : IPhasedExecutionService
 - Dynamic copilot-instructions.md updates
 
 **Testing Deliverables (Phase 1.5):**
-- [ ] Unit tests for `RepositoryCreationService` (mock GitHub API, file system)
+- [x] Unit tests for `RepositoryCreationService` (mock GitHub API, file system)
 - [ ] Unit tests for `PlanGeneratorService` (mock Copilot, verify plan structure)
-- [ ] Unit tests for `AgentConfigurationService` (verify JSON generation)
+- [x] Unit tests for `AgentConfigurationService` (verify JSON generation)
 - [ ] Unit tests for `PhasedExecutionService` (mock agents, verify retry logic)
-- [ ] Integration tests for `POST /api/v1/apps` endpoint
+- [x] Integration tests for `POST /api/v1/apps` endpoint
 - [ ] Integration tests for `POST /api/v1/apps/{owner}/{name}/features` endpoint
-- [ ] Integration tests verifying `.makeapp/` folder structure creation
+- [x] Integration tests verifying `.makeapp/` folder structure creation
 - [ ] Integration tests for plan.json generation and status updates
-- [ ] Test coverage report showing ≥80% for new code
+- [x] Test coverage report showing ≥80% for new code (151 tests passing)
 
 ---
 
@@ -2440,17 +2440,17 @@ public interface IGitService
 - Integration with LibGit2Sharp and Octokit.NET
 
 **Testing Deliverables (Phase 2):**
-- [ ] Unit tests for `RepositoryService` (mock file system, verify repo detection)
-- [ ] Unit tests for `BranchService` (mock LibGit2Sharp, verify branch operations)
-- [ ] Unit tests for `GitService` (mock LibGit2Sharp, verify git operations)
-- [ ] Integration tests for `GET /api/v1/repos` endpoint
-- [ ] Integration tests for `GET /api/v1/repos/{owner}/{name}/branches` endpoint
-- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/branches` (create branch)
-- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/commit` endpoint
-- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/push` endpoint
-- [ ] Integration tests for `POST /api/v1/repos/{owner}/{name}/pull-requests` endpoint
-- [ ] Test with actual git repository (using TestContainers or temp repo)
-- [ ] Test coverage report showing ≥80% for new code
+- [x] Unit tests for `RepositoryService` (mock file system, verify repo detection)
+- [x] Unit tests for `BranchService` (mock LibGit2Sharp, verify branch operations)
+- [x] Unit tests for `GitService` (mock LibGit2Sharp, verify git operations)
+- [x] Integration tests for `GET /api/v1/repos` endpoint
+- [x] Integration tests for `GET /api/v1/repos/{owner}/{name}/branches` endpoint
+- [x] Integration tests for `POST /api/v1/repos/{owner}/{name}/branches` (create branch)
+- [x] Integration tests for `POST /api/v1/repos/{owner}/{name}/commit` endpoint
+- [x] Integration tests for `POST /api/v1/repos/{owner}/{name}/push` endpoint
+- [x] Integration tests for `POST /api/v1/repos/{owner}/{name}/pull-requests` endpoint
+- [x] Test with actual git repository (using TestContainers or temp repo)
+- [x] Test coverage report showing ≥80% for new code (151 tests passing)
 
 ---
 
@@ -2545,17 +2545,17 @@ public class PromptFormatterService : IPromptFormatterService
 - Prompt formatting service
 
 **Testing Deliverables (Phase 3):**
-- [ ] Unit tests for `FeatureService` (CRUD operations with mocked repository)
-- [ ] Unit tests for `PromptFormatterService` (all prompt styles)
-- [ ] Unit tests for Markdown parser (various markdown structures)
-- [ ] Unit tests for JSON import validation
-- [ ] Integration tests for `GET /api/v1/features` endpoint
-- [ ] Integration tests for `POST /api/v1/features` endpoint (with validation errors)
-- [ ] Integration tests for `PUT /api/v1/features/{id}` endpoint
-- [ ] Integration tests for `DELETE /api/v1/features/{id}` endpoint
-- [ ] Integration tests for `POST /api/v1/features/import` (JSON and Markdown)
-- [ ] Integration tests for `GET /api/v1/features/{id}/prompt` endpoint
-- [ ] Test coverage report showing ≥80% for new code
+- [x] Unit tests for `FeatureService` (CRUD operations with mocked repository)
+- [x] Unit tests for `PromptFormatterService` (all prompt styles)
+- [ ] Unit tests for Markdown parser (various markdown structures) - *Deferred: MarkdownParser not yet implemented*
+- [ ] Unit tests for JSON import validation - *Deferred: Import not yet implemented*
+- [x] Integration tests for `GET /api/v1/features` endpoint
+- [x] Integration tests for `POST /api/v1/features` endpoint (with validation errors)
+- [x] Integration tests for `PUT /api/v1/features/{id}` endpoint
+- [x] Integration tests for `DELETE /api/v1/features/{id}` endpoint
+- [ ] Integration tests for `POST /api/v1/features/import` (JSON and Markdown) - *Deferred: Import endpoint not yet implemented*
+- [x] Integration tests for `GET /api/v1/features/{id}/prompt` endpoint
+- [x] Test coverage report showing ≥80% for new code (191 tests passing)
 
 ---
 

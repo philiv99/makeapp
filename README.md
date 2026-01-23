@@ -1,45 +1,130 @@
-# MakeApp CLI
+# MakeApp
 
-> AI-Powered Feature Development Workflow Automation
+> AI-Powered Feature Development Workflow Automation Platform
 
-MakeApp is a PowerShell CLI tool that orchestrates feature development workflows using GitHub Copilot CLI, automating branch management, AI-driven code generation, and PR creation.
+MakeApp is a development workflow automation platform that orchestrates AI-driven code generation using GitHub Copilot. It provides both a **PowerShell CLI** for interactive use and a **C#.NET Web API** for programmatic integration, enabling automated branch management, feature requirement capture, and pull request creation.
+
+## Overview
+
+MakeApp automates the end-to-end feature development workflow:
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Select Repo    │───▶│ Feature Input    │───▶│ Verify Config   │
+│  & Branch       │    │ (Interactive/    │    │ (Copilot, MCP)  │
+│                 │    │  File/API)       │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│  Create PR      │◀───│ Git Operations   │◀───│ Agent           │
+│  (optional)     │    │ (stage/commit/   │    │ Orchestration   │
+│                 │    │  push)           │    │ Loop            │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
 
 ## Features
 
-- 🌿 **Branch Management** - Interactive repo/branch selection with auto-create
-- 📝 **Feature Prompts** - Capture requirements via interactive prompts or files
-- 🤖 **Agent Orchestration** - Iterative Copilot CLI execution with planning
-- ✅ **Configuration Verification** - Auto-check/create Copilot instructions & MCP configs
+- 🌿 **Repository & Branch Management** - Scan, select, and create branches across repositories
+- 📝 **Feature Requirements** - Capture requirements via CLI prompts, files, or API
+- 🤖 **AI Agent Orchestration** - Iterative GitHub Copilot execution with plan generation
+- ✅ **Configuration Management** - Auto-check/create Copilot instructions & MCP configs
 - 📦 **Git Automation** - Stage, commit, push, and create PRs automatically
-- 🔔 **Notifications** - Terminal, toast, and webhook notifications
+- 🔌 **RESTful API** - Programmatic access to all workflow capabilities
+- 🧠 **Memory System** - Persist and recall context across sessions
+- 🏗️ **Sandbox Mode** - Isolated testing environment for safe experimentation
+
+---
+
+## Project Structure
+
+```
+makeapp/
+├── makeapp.ps1              # PowerShell CLI entry point
+├── config/                   # Configuration files
+│   ├── defaults.json         # Default configuration
+│   └── sandbox_defaults.json # Sandbox mode configuration
+├── modules/                  # PowerShell modules
+│   ├── BranchManager.ps1     # Git branch operations
+│   ├── CopilotConfig.ps1     # Copilot configuration management
+│   ├── Executor.ps1          # Command orchestration
+│   ├── FeaturePrompt.ps1     # Feature requirements capture
+│   ├── GitAutomation.ps1     # Git commit/push/PR operations
+│   └── Sandbox.ps1           # Sandbox environment management
+├── makeapp_api/              # C#.NET Web API solution
+│   ├── src/
+│   │   ├── MakeApp.Api/        # Web API controllers & configuration
+│   │   ├── MakeApp.Application/ # Services, DTOs, validators
+│   │   ├── MakeApp.Core/        # Domain entities & interfaces
+│   │   └── MakeApp.Infrastructure/ # External service implementations
+│   ├── tests/                 # Unit & integration tests
+│   └── templates/             # Agent & copilot instruction templates
+└── sandbox/                  # Sandbox workspace directory
+```
+
+---
 
 ## Requirements
 
-- **PowerShell 7+** - [Install PowerShell](https://docs.microsoft.com/en-us/powershell/scripting/install/installing-powershell)
-- **Git** - [Install Git](https://git-scm.com/downloads)
-- **GitHub CLI** - [Install gh](https://cli.github.com/)
-- **GitHub Copilot** - Active subscription with CLI extension
+| Component | Version | Description |
+|-----------|---------|-------------|
+| **PowerShell** | 7.0+ | Required for CLI |
+| **Git** | Latest | Version control |
+| **GitHub CLI** | Latest | GitHub operations & Copilot CLI |
+| **GitHub Copilot** | Active subscription | AI code generation |
+| **.NET SDK** | 8.0+ | Required for Web API |
+
+### Verify Prerequisites
+
+```powershell
+# PowerShell version
+$PSVersionTable.PSVersion
+
+# Git
+git --version
+
+# GitHub CLI
+gh --version
+gh auth status
+
+# .NET SDK (for API)
+dotnet --version
+```
+
+---
 
 ## Installation
 
-1. Clone this repository:
-   ```powershell
-   git clone https://github.com/your-org/makeapp.git
-   cd makeapp
-   ```
+### Clone Repository
 
-2. (Optional) Add to your PATH or create an alias:
-   ```powershell
-   # Add to PowerShell profile
-   Set-Alias makeapp "C:\path\to\makeapp\makeapp.ps1"
-   ```
+```powershell
+git clone https://github.com/philiv99/makeapp.git
+cd makeapp
+```
 
-3. Authenticate with GitHub CLI:
-   ```powershell
-   gh auth login
-   ```
+### CLI Setup (Optional)
 
-## Quick Start
+```powershell
+# Add alias to PowerShell profile
+Add-Content $PROFILE 'Set-Alias makeapp "C:\path\to\makeapp\makeapp.ps1"'
+. $PROFILE
+```
+
+### API Setup
+
+```powershell
+cd makeapp_api/src/MakeApp.Api/MakeApp.Api
+dotnet restore
+dotnet run
+```
+
+The API will be available at `https://localhost:5001` with Swagger UI at `/swagger`.
+
+---
+
+## PowerShell CLI Usage
+
+### Quick Start
 
 ```powershell
 # Start interactive workflow
@@ -55,8 +140,6 @@ MakeApp is a PowerShell CLI tool that orchestrates feature development workflows
 ./makeapp.ps1 config
 ```
 
-## Usage
-
 ### Actions
 
 | Action | Description |
@@ -66,6 +149,7 @@ MakeApp is a PowerShell CLI tool that orchestrates feature development workflows
 | `config` | View and edit MakeApp configuration |
 | `status` | Show current status of MakeApp and repository |
 | `template` | Create a new feature template file |
+| `sandbox` | Manage sandbox testing environment |
 | `help` | Show help message |
 
 ### Options
@@ -75,10 +159,12 @@ MakeApp is a PowerShell CLI tool that orchestrates feature development workflows
 | `-RepoPath` | Path to the repository |
 | `-FeatureFile` | Path to a feature definition file (.md or .json) |
 | `-BranchName` | Name of branch to create or switch to |
+| `-ProjectType` | Project type: `powershell`, `node`, `python`, `generic` |
 | `-AutoApprove` | Auto-approve all commands (use with caution) |
 | `-NoPush` | Don't push changes to remote |
 | `-NoPR` | Don't create a pull request |
-| `-Verbose` | Enable verbose output |
+| `-Sandbox` | Run in sandbox mode |
+| `-Force` | Force operation |
 
 ### Examples
 
@@ -94,19 +180,186 @@ MakeApp is a PowerShell CLI tool that orchestrates feature development workflows
 
 # Auto-approve commands (for CI/automation)
 ./makeapp.ps1 start -AutoApprove -NoPR
+
+# Run in sandbox mode for safe testing
+./makeapp.ps1 start -Sandbox
 ```
+
+---
+
+## Web API
+
+The MakeApp Web API exposes RESTful endpoints for programmatic workflow automation.
+
+### API Endpoints
+
+#### Repositories
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/repos` | List available repositories |
+| GET | `/api/v1/repos/{owner}/{name}` | Get repository info |
+| GET | `/api/v1/repos/{owner}/{name}/status` | Get repository config status |
+| GET | `/api/v1/repos/{owner}/{name}/branches` | List branches |
+| POST | `/api/v1/repos/{owner}/{name}/branches` | Create a branch |
+
+#### Features
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/features` | List features |
+| GET | `/api/v1/features/{id}` | Get feature details |
+| POST | `/api/v1/features` | Create a new feature |
+| PUT | `/api/v1/features/{id}` | Update a feature |
+
+#### Git Operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/repos/{owner}/{name}/git/changes/unstaged` | Get unstaged changes |
+| GET | `/api/v1/repos/{owner}/{name}/git/changes/staged` | Get staged changes |
+| GET | `/api/v1/repos/{owner}/{name}/git/commits/unpushed` | Get unpushed commits |
+| POST | `/api/v1/repos/{owner}/{name}/git/stage` | Stage changes |
+| POST | `/api/v1/repos/{owner}/{name}/git/commit` | Create commit |
+| POST | `/api/v1/repos/{owner}/{name}/git/push` | Push to remote |
+| POST | `/api/v1/repos/{owner}/{name}/git/pull-request` | Create pull request |
+
+#### Apps
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/apps` | Create a new app with MakeApp structure |
+| GET | `/api/v1/apps/{id}` | Get app information |
+| GET | `/api/v1/apps/{id}/status` | Get app status |
+
+### Health Checks
+
+| Endpoint | Description |
+|----------|-------------|
+| `/health` | Basic health check |
+| `/health/ready` | Readiness check |
+
+---
+
+## Architecture
+
+The Web API follows **Clean Architecture** with four layers:
+
+### Core Layer (`MakeApp.Core`)
+Domain entities, interfaces, and business rules with no external dependencies.
+
+- **Entities**: `RepositoryInfo`, `BranchInfo`, `Feature`, `Workflow`, `App`
+- **Interfaces**: `IRepositoryService`, `IGitService`, `IGitHubService`, `IOrchestrationService`
+- **Configuration**: `MakeAppOptions`, `UserConfiguration`
+
+### Application Layer (`MakeApp.Application`)
+Use cases, DTOs, validators, and service orchestration.
+
+- **Services**: `FeatureService`, `AppService`, `PlanGeneratorService`, `PromptFormatterService`
+- **DTOs**: Request/response data transfer objects
+- **Mappings**: AutoMapper profiles
+
+### Infrastructure Layer (`MakeApp.Infrastructure`)
+External service implementations.
+
+- **Git Operations**: `GitService`, `BranchService`
+- **GitHub Integration**: `GitHubService`, `RepositoryCreationService`
+- **File System**: `FileSystemService`
+- **Memory System**: `MemoryService`
+- **Sandbox**: `SandboxService`
+
+### API Layer (`MakeApp.Api`)
+Controllers, middleware, and API configuration.
+
+- **Controllers**: `ReposController`, `FeaturesController`, `GitController`, `AppsController`
+- **Features**: API versioning, Swagger/OpenAPI, health checks, Serilog logging
+
+---
+
+## Configuration
+
+### CLI Configuration (`config/defaults.json`)
+
+```json
+{
+  "folders": {
+    "repos": "C:\\development\\repos",
+    "workspace": "C:\\development\\workspace"
+  },
+  "github": {
+    "defaultBaseBranch": "main",
+    "tokenEnvVar": "GITHUB_TOKEN"
+  },
+  "llm": {
+    "defaultProvider": "copilot",
+    "providers": {
+      "copilot": { "model": "gpt-4o" },
+      "openai": { "enabled": false },
+      "anthropic": { "enabled": false }
+    }
+  }
+}
+```
+
+### API Configuration (`appsettings.json`)
+
+```json
+{
+  "MakeApp": {
+    "Agent": {
+      "MaxRetries": 3,
+      "MaxIterations": 50,
+      "AutoApprove": false
+    },
+    "Git": {
+      "DefaultBranch": "main",
+      "AutoPush": true
+    }
+  }
+}
+```
+
+---
+
+## Development
+
+### Running Tests
+
+```powershell
+# Run all tests
+cd makeapp_api
+dotnet test
+
+# Run specific test project
+dotnet test tests/MakeApp.Api.Tests/MakeApp.Api.Tests
+
+# Run with coverage
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+### Building the API
+
+```powershell
+cd makeapp_api/src/MakeApp.Api/MakeApp.Api
+dotnet build
+dotnet publish -c Release -o ./publish
+```
+
+---
 
 ## Workflow
 
+The interactive workflow guides you through feature development:
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     makeapp.ps1                             │
+│                   MakeApp Workflow                          │
 ├─────────────────────────────────────────────────────────────┤
 │  1. Select/Create Branch                                    │
 │     └─> Interactive repo & branch selection                 │
 │                                                             │
 │  2. Enter Feature Requirements                              │
-│     └─> Interactive prompts or load from file               │
+│     └─> Interactive prompts, file, or API request           │
 │                                                             │
 │  3. Verify Configurations                                   │
 │     └─> Check/create copilot-instructions.md & mcp.json     │
@@ -115,45 +368,11 @@ MakeApp is a PowerShell CLI tool that orchestrates feature development workflows
 │     └─> Agent orchestration with iterative planning         │
 │                                                             │
 │  5. Commit, Push, Create PR                                 │
-│     └─> Git automation with notifications                   │
+│     └─> Automated git operations with notifications         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Configuration
-
-Configuration is stored in `~/.makeapp/config.json`. You can also modify defaults in `config/defaults.json`.
-
-### Key Settings
-
-```json
-{
-  "folders": {
-    "repos": "C:\\development\\repos"
-  },
-  "github": {
-    "owner": "your-username",
-    "defaultBaseBranch": "main"
-  },
-  "git": {
-    "autoStage": true,
-    "autoCommit": false,
-    "autoPush": false,
-    "autoCreatePr": false
-  },
-  "agent": {
-    "maxIterations": 50,
-    "autoApproveCommands": false
-  }
-}
-```
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `GITHUB_TOKEN` | GitHub authentication token |
-| `MAKEAPP_REPOS` | Override repos folder path |
-| `MAKEAPP_VERBOSE` | Enable verbose output |
+---
 
 ## Feature Files
 
@@ -194,33 +413,27 @@ Implement JWT-based authentication for the API.
 }
 ```
 
-## Project Structure
+---
 
-```
-makeapp/
-├── .github/
-│   ├── copilot-instructions.md    # Copilot context for this repo
-│   └── plan.md                    # Development plan
-├── .vscode/
-│   └── mcp.json                   # MCP server configurations
-├── config/
-│   └── defaults.json              # Default configuration
-├── modules/
-│   ├── BranchManager.ps1          # Branch management functions
-│   ├── FeaturePrompt.ps1          # Feature requirements capture
-│   ├── CopilotConfig.ps1          # Copilot configuration verifier
-│   ├── Executor.ps1               # Copilot CLI orchestrator
-│   └── GitAutomation.ps1          # Git/PR automation
-├── makeapp.ps1                    # Main CLI entry point
-└── README.md                      # This file
-```
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub authentication token |
+| `MAKEAPP_REPOS` | Override repos folder path |
+| `MAKEAPP_VERBOSE` | Enable verbose output |
+
+---
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Submit a pull request
+4. Run tests (`dotnet test`)
+5. Submit a pull request
+
+---
 
 ## License
 

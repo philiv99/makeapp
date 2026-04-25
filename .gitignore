@@ -69,3 +69,4 @@ ehthumbs.db
 # =========================
 # Module output
 *.psd1.bak
+config/defaults.json
